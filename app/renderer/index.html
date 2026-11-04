@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self'; media-src 'self' blob:; worker-src 'self' blob:;">
+<title>No Contrail</title>
+<link rel="stylesheet" href="app://local/style.css">
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <svg width="26" height="26" viewBox="0 0 32 32" aria-hidden="true">
+        <path d="M3 25 C 10 24, 14 20, 17 14" stroke="#F2B544" stroke-width="3.5" stroke-linecap="round" fill="none"/>
+        <path d="M19 11 C 21 8, 23 6, 25 5" stroke="#F2B544" stroke-width="3" stroke-linecap="round" fill="none" opacity="0.55"/>
+      </svg>
+      <span>No Contrail</span>
+    </div>
+    <span id="privacy" class="badge" title="Audio is decoded and analysed in this window. The app can reach no network.">● processed on this machine</span>
+  </header>
+
+  <main>
+    <section id="intro">
+      <h1>Audit a recording for aircraft-Doppler leaks.</h1>
+      <p>Drop in a clip you own. No Contrail looks for the slowly drifting aircraft
+         tones that can place a recording, and tells you whether it leaks. The
+         audio never leaves this window.</p>
+    </section>
+
+    <div id="drop" class="drop" tabindex="0" role="button" aria-label="Choose or drop an audio file">
+      <p class="drop-main">Drop an audio or video file here</p>
+      <p class="drop-sub">or <button id="pick" type="button">choose a file</button></p>
+      <p id="engine-note" class="muted">Preparing the engine on first run…</p>
+    </div>
+
+    <section id="progress" hidden>
+      <p id="status">Working…</p>
+      <div class="bar"><div id="bar-fill"></div></div>
+    </section>
+
+    <section id="results" hidden></section>
+  </main>
+
+  <script type="module" src="app://local/renderer.js"></script>
+</body>
+</html>

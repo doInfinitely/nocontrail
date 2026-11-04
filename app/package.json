@@ -1,0 +1,19 @@
+{
+  "name": "nocontrail-app",
+  "version": "0.0.1",
+  "description": "No Contrail — audit your recordings for aircraft-Doppler location leaks, fully on your machine.",
+  "private": true,
+  "main": "main.js",
+  "scripts": {
+    "sync-engine": "node scripts/sync-engine.js",
+    "prewarm": "node scripts/prewarm.js",
+    "postinstall": "node scripts/sync-engine.js",
+    "start": "node scripts/sync-engine.js && electron ."
+  },
+  "devDependencies": {
+    "electron": "^33.2.1"
+  },
+  "dependencies": {
+    "pyodide": "0.27.2"
+  }
+}
