@@ -1,4 +1,4 @@
-"""contrail audit <wav>    — list detected flyover lines and a leak score
+"""contrail audit <wav>    — list detected flyovers, their lines, and a leak score
    contrail scrub <in> <out> [--no-gate] [--no-notch] [--no-decoy] [--decoys N]
 """
 from __future__ import annotations
@@ -9,7 +9,7 @@ import sys
 import numpy as np
 from scipy.io import wavfile
 
-from .detect import find_tracks, leak_score
+from .detect import find_tracks, group_flyovers, leak_score
 from .scrub import ScrubConfig, scrub
 
 
@@ -32,9 +32,12 @@ def _save(path: str, y: np.ndarray, sr: int) -> None:
 def cmd_audit(args) -> int:
     y, sr = _load(args.input)
     tracks = find_tracks(y, sr)
-    for tr in tracks:
-        print(tr)
-    print(f"\n{len(tracks)} flyover line(s). leak score: {leak_score(tracks):.2f}")
+    groups = group_flyovers(tracks)
+    for g in groups:
+        print(g)
+        for h, tr in zip(g.harmonics, g.tracks):
+            print(f"  h{h}: {tr}")
+    print(f"\n{len(groups)} flyover(s) from {len(tracks)} line(s). leak score: {leak_score(tracks):.2f}")
     return 0
 
 

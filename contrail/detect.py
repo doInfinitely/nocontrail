@@ -12,6 +12,8 @@ Pipeline:
 from __future__ import annotations
 
 from dataclasses import dataclass
+from fractions import Fraction
+from math import gcd, lcm
 
 import numpy as np
 from scipy.signal import find_peaks, stft
@@ -374,9 +376,96 @@ def _dedupe(tracks: list[Track], cfg: DetectConfig) -> list[Track]:
     return sorted(keep, key=lambda x: x.times[0])
 
 
+@dataclass
+class GroupConfig:
+    """When lines count as harmonics of one aircraft. Both must hold."""
+    max_ratio_error: float = 0.01     # measured frequency ratio vs a small-integer ratio
+    max_harmonic: int = 6             # largest integer in that ratio
+    max_joint_rms_frac: float = 0.005 # joint fit residual, as a fraction of f0
+
+
+@dataclass
+class FlyoverGroup:
+    """Tracks attributed to one aircraft. `harmonics` holds each track's harmonic
+    number relative to the group; the true fundamental may not have been detected."""
+    tracks: list[Track]
+    harmonics: list[int]
+    fit: DopplerFit
+
+    @property
+    def duration(self) -> float:
+        return max(tr.duration for tr in self.tracks)
+
+    @property
+    def drop_hz(self) -> float:
+        return max(tr.drop_hz for tr in self.tracks)
+
+    def __repr__(self) -> str:
+        f = self.fit
+        return (
+            f"FlyoverGroup({len(self.tracks)} line(s), harmonics={self.harmonics}, "
+            f"v={f.v:.0f}m/s d={f.d:.0f}m tc={f.tc:.1f}s rms={f.rms / f.f0:.2%})"
+        )
+
+
+def _joint_fit(members: list[Track], ratios: list[Fraction]) -> DopplerFit:
+    """One flyover model through every member, each scaled onto a common fundamental."""
+    tt = np.concatenate([tr.times for tr in members])
+    ff = np.concatenate([tr.freqs / float(r) for tr, r in zip(members, ratios)])
+    order = np.argsort(tt)
+    return fit_doppler(tt[order], ff[order])
+
+
+def _harmonic_numbers(ratios: list[Fraction]) -> list[int]:
+    """Smallest integers in the same proportion as `ratios`."""
+    denom = lcm(*(r.denominator for r in ratios))
+    ints = [int(r * denom) for r in ratios]
+    div = gcd(*ints)
+    return [i // div for i in ints]
+
+
+def group_flyovers(tracks: list[Track], cfg: GroupConfig | None = None) -> list[FlyoverGroup]:
+    """Attribute lines to aircraft.
+
+    Harmonics of one source share speed, miss distance and closest approach, and
+    their frequencies stand in an integer ratio. So the test is physical: measure
+    the candidate's ratio to the group's curve, snap it to a small-integer ratio,
+    then require one flyover model to fit both. The separate fit of a short fragment
+    is too poorly constrained to compare parameters directly. The longest lines
+    seed groups.
+    """
+    cfg = cfg or GroupConfig()
+    candidates = sorted(
+        {Fraction(p, q) for p in range(1, cfg.max_harmonic + 1) for q in range(1, cfg.max_harmonic + 1)}
+    )
+    groups: list[tuple[list[Track], list[Fraction], DopplerFit]] = []
+    fitted = [tr for tr in tracks if tr.fit is not None]
+    for tr in sorted(fitted, key=lambda x: -x.duration):
+        best = None
+        for g, (members, ratios, fit) in enumerate(groups):
+            observed = float(np.median(tr.freqs / doppler_model(tr.times, fit.f0, fit.v, fit.d, fit.tc)))
+            r = min(candidates, key=lambda c: abs(observed / float(c) - 1.0))
+            if abs(observed / float(r) - 1.0) > cfg.max_ratio_error:
+                continue
+            joint = _joint_fit(members + [tr], ratios + [r])
+            err = joint.rms / joint.f0
+            if err <= cfg.max_joint_rms_frac and (best is None or err < best[0]):
+                best = (err, g, r, joint)
+        if best is None:
+            groups.append(([tr], [Fraction(1)], tr.fit))
+        else:
+            _, g, r, joint = best
+            members, ratios, _ = groups[g]
+            groups[g] = (members + [tr], ratios + [r], joint)
+    out = [FlyoverGroup(m, _harmonic_numbers(r), f) for m, r, f in groups]
+    return sorted(out, key=lambda g: g.fit.tc)
+
+
 def leak_score(tracks: list[Track]) -> float:
-    """0–1. Three or more clean, long tracks is enough to trilaterate."""
-    if not tracks:
+    """0-1. Three or more clean, long flyovers is enough to trilaterate. Counts
+    aircraft rather than lines, since a plane's harmonics add no new geometry."""
+    groups = group_flyovers(tracks)
+    if not groups:
         return 0.0
-    s = sum(min(1.0, tr.duration / 40.0) * min(1.0, tr.drop_hz / 15.0) for tr in tracks)
+    s = sum(min(1.0, g.duration / 40.0) * min(1.0, g.drop_hz / 15.0) for g in groups)
     return float(min(1.0, s / 3.0))

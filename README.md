@@ -48,6 +48,7 @@ contrail/scrub.py     gate / notch / decoy tiers, verified by re-detection
 contrail/cli.py       `contrail audit <wav>`, `contrail scrub <in> <out>`
 scripts/validate.py   plants flyovers, scores recovery, renders the spectrogram
 scripts/scrub_bench.py before/after per scrub tier
+scripts/group_bench.py scores line-to-plane grouping against planted truth
 ```
 
 ## Scrubbing
@@ -132,8 +133,13 @@ print("leak score:", leak_score(tracks))
 
 1. **VAD gating** — only pick peaks in speech-free frames (silero/webrtcvad);
    fixes lines inside the pitch band and should cut tracker fragmentation.
-2. **Group harmonics by flyover** — tracks with the same `tc` and `v` are one
-   plane; leak score should count planes, not lines.
+2. **Group harmonics by flyover** — done, on synthetic clips. Lines join a group
+   when their measured frequency ratio snaps to a small integer ratio and one
+   flyover model fits them jointly. The leak score now counts planes, not lines.
+   Held-out seeds 8-15: 16/16 grouped pairs on the same plane, 16/23 same-plane
+   pairs grouped. Missed merges overcount planes, usually where the tracker has
+   glued lines together. One-plane clips with several lines scored about 0.33,
+   down from as high as 0.95.
 3. **Real VAD** (silero) in place of the energy gate; also use it in the
    detector so peaks are only picked from speech-free frames.
 4. **Real audio** — the whole thing needs a bench of real recordings with
