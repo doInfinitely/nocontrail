@@ -142,15 +142,16 @@ class DetectConfig:
     d_range: tuple[float, float] = (100.0, 12_000.0)  # plausible slant miss distance, m
     # VAD gating: in talking frames, drop picked peaks in the speech pitch band.
     # VALIDATED ON REAL SPEECH AND FOUND NOT TO HELP — kept off, as scaffolding
-    # only. On a 135 s own-voice recording + planted flyovers, no vad_margin_db
-    # beats vad=False: a low margin fires on ~half the frames and guts the real
-    # aircraft lines that live in the speech band (recovery 16→5 of 18), while a
-    # high margin barely fires and nudges spurious tracks up, not down. The
-    # lesson: when speech is near-continuous you cannot blanket-suppress the band
-    # the line sits in. A real fix needs a learned VAD (silero/webrtcvad) and a
-    # targeted rejection (e.g. only peaks coincident with a tracked voice
-    # harmonic), not this band gate. voice_activity() below is kept as the
-    # primitive to build that on. Do not enable vad as-is.
+    # only. Across ~48 min of real speech (3 recordings, 12 windows) + planted
+    # flyovers, no vad_margin_db beats vad=False: off gives the fewest spurious
+    # tracks at equal recovery (29/36, 18 spurious); a low margin fires often and
+    # deletes the aircraft lines that share the speech band, a high margin barely
+    # fires and pushes spurious tracks up, not down. When speech is near-
+    # continuous you cannot blanket-suppress the band the line sits in. A real
+    # fix needs a learned VAD (silero/webrtcvad) and a targeted rejection (only
+    # peaks coincident with a tracked voice harmonic), not this band gate.
+    # voice_activity() below is kept as the primitive to build that on. Do not
+    # enable vad as-is.
     vad: bool = False
     vad_band: tuple[float, float] = (300.0, 3400.0)   # band whose energy signals speech
     vad_margin_db: float = 12.0                        # dB above the band's floor = speech

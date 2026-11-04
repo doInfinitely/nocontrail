@@ -134,8 +134,10 @@ print("leak score:", leak_score(tracks))
 1. **VAD gating** — tried and shelved. A `DetectConfig.vad` energy-VAD band-gate
    is in the code but **off**, because validating it on real speech (a 135 s
    own-voice recording + planted flyovers) showed it never beats VAD-off: turn
-   it up and it deletes the aircraft lines that share the speech band (recovery
-   16→5 of 18); turn it down and it barely fires and adds spurious tracks. The
+   it up and it deletes the aircraft lines that share the speech band; turn it
+   down and it barely fires and adds spurious tracks. Across ~48 min of real
+   speech (3 recordings, 12 windows), VAD-off gave the fewest spurious tracks at
+   equal recovery (29/36). The
    real fix is a learned VAD (silero/webrtcvad) plus a targeted rejection of
    peaks that coincide with a tracked voice harmonic — not a blanket band gate.
 
