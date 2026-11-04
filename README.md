@@ -137,9 +137,14 @@ print("leak score:", leak_score(tracks))
    it up and it deletes the aircraft lines that share the speech band; turn it
    down and it barely fires and adds spurious tracks. Across ~48 min of real
    speech (3 recordings, 12 windows), VAD-off gave the fewest spurious tracks at
-   equal recovery (29/36). The
-   real fix is a learned VAD (silero/webrtcvad) plus a targeted rejection of
-   peaks that coincide with a tracked voice harmonic — not a blanket band gate.
+   equal recovery (29/36). A targeted rejection was then tried — estimate the
+   speaker's pitch per frame and drop only peaks on a voice harmonic — and it
+   too lost more real recovery than the spurious tracks it removed (29→26 of 36,
+   to cut 18→16 spurious), because aircraft lines cross through the voice
+   harmonics. Takeaway: speech-based peak suppression doesn't help here; the
+   physical Doppler fit is already the better separator of planes from voice. A
+   future attempt needs a learned VAD *and* evidence it beats that fit, not
+   another hand-tuned gate.
 
 
 2. **Group harmonics by flyover** — done, on synthetic clips. Lines join a group
