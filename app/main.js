@@ -80,6 +80,22 @@ ipcMain.handle("selftest-done", async (_e, payload) => {
   if (process.env.NC_SELFTEST) app.exit(payload && payload.ok ? 0 : 3);
 });
 
+ipcMain.handle("selftest-write", (_e, { path: fp, bytes }) => {
+  require("node:fs").writeFileSync(fp, Buffer.from(bytes));
+  return true;
+});
+
+ipcMain.handle("save-wav", async (_e, { defaultName, bytes }) => {
+  const r = await dialog.showSaveDialog({
+    title: "Save scrubbed audio",
+    defaultPath: defaultName,
+    filters: [{ name: "WAV audio", extensions: ["wav"] }],
+  });
+  if (r.canceled || !r.filePath) return { saved: false };
+  require("node:fs").writeFileSync(r.filePath, Buffer.from(bytes));
+  return { saved: true, path: r.filePath };
+});
+
 ipcMain.handle("pick-audio", async () => {
   const r = await dialog.showOpenDialog({
     title: "Choose a recording to audit",

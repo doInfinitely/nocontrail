@@ -55,3 +55,8 @@ th { color: var(--dim); font-weight: 600; }
 td.num { text-align: right; font-variant-numeric: tabular-nums; }
 .again { margin-top: 20px; }
 .err { color: var(--bad); margin-top: 16px; }
+.scrub { margin-top: 20px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.scrub button { background: #121A30; color: var(--accent); border: 1px solid #2A3250; }
+.scrub button:disabled { opacity: .5; cursor: default; }
+#scrub-note { font-size: 13px; }
+#scrub-result code { color: var(--muted); font-size: 12px; word-break: break-all; }

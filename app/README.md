@@ -31,9 +31,11 @@ scripts), run `node node_modules/electron/install.js` once.
 
 ## Status
 
-Early. The audit runs and is verified end-to-end (a planted-leak clip scores
-1.00 / 5 flyovers; a clean clip scores 0), but the detector itself is still
-validated only on synthetic audio. Not yet built: the scrubber UI, long-VOD
+Early. Audit and scrub both run and are verified end-to-end: a planted-leak clip
+audits to 1.00 / 5 flyovers and a clean clip to 0; scrubbing that clip notches
+the detected lines, mixes in decoys, and saves a 16 kHz mono WAV with the real
+lines reduced. The detector itself is still validated only on synthetic audio.
+Not yet built: full-resolution (stereo / original-rate) scrub output, long-VOD
 sampling inside the app (use `scripts/audit_video.py` for whole VODs), and
 packaging/signing for distribution.
 
@@ -42,3 +44,4 @@ packaging/signing for distribution.
 - `NC_DEBUG=1` — forward renderer console and load failures to stdout.
 - `NC_SELFTEST=/path/to.wav` — audit that file on launch, print the result, exit.
 - `NC_SHOT=/path/to.png` — with a self-test, capture the result screen to PNG.
+- `NC_SELFTEST_SCRUB=1` / `NC_SCRUB_OUT=/path/to.wav` — also scrub the self-test clip and write the result.

@@ -22,7 +22,11 @@ contextBridge.exposeInMainWorld("nocontrail", {
   },
   basename: (p) => path.basename(p),
   pickAudio: () => ipcRenderer.invoke("pick-audio"),
+  saveWav: (defaultName, bytes) => ipcRenderer.invoke("save-wav", { defaultName, bytes }),
   platform: process.platform,
   selftestPath: process.env.NC_SELFTEST || null,
+  selftestScrub: !!process.env.NC_SELFTEST_SCRUB,
+  scrubOutPath: process.env.NC_SCRUB_OUT || null,
+  selftestWrite: (path, bytes) => ipcRenderer.invoke("selftest-write", { path, bytes }),
   selftestDone: (payload) => ipcRenderer.invoke("selftest-done", payload),
 });
