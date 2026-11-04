@@ -64,11 +64,15 @@ def audit(path: str, n_windows: int, window_s: float, sr: int, seed: int) -> dic
                 extract(path, start, window_s, sr, wav)
                 fs, y = wavfile.read(wav)
                 y = y.astype(np.float32) / 32768.0
+                # a stream gap at this offset can yield a near-empty extract;
+                # too few samples to form even one STFT frame -> skip it
+                if y.size < fs:  # < 1 s of audio
+                    raise ValueError(f"empty/short extract ({y.size} samples)")
+                tracks = find_tracks(y, fs)
+                groups = group_flyovers(tracks)
             except Exception as e:  # noqa: BLE001
-                windows.append({"start_s": start, "error": str(e)[:200]})
+                windows.append({"start_s": round(start, 1), "error": str(e)[:200]})
                 continue
-            tracks = find_tracks(y, fs)
-            groups = group_flyovers(tracks)
             windows.append({
                 "start_s": round(start, 1),
                 "lines": len(tracks),

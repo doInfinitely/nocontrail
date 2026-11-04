@@ -52,7 +52,15 @@ def build(folder: Path, name: str, auditor: str = "") -> str:
     reports = []
     for p in sorted(folder.glob("*.json")):
         with open(p) as f:
-            reports.append(json.load(f))
+            rep = json.load(f)
+        # a window skipped for a stream-gap/empty extract has {"error": ...}
+        # instead of leak/groups; treat it as a scored-but-empty window so the
+        # rest of the builder can assume every window has leak + groups.
+        for w in rep.get("windows", []):
+            w.setdefault("leak", 0.0)
+            w.setdefault("flyovers", 0)
+            w.setdefault("groups", [])
+        reports.append(rep)
 
     total_h = sum(r["duration_s"] for r in reports) / 3600
     n_win = sum(r["windows_sampled"] for r in reports)
