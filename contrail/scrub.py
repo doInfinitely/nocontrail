@@ -20,7 +20,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 import numpy as np
-from scipy.signal import butter, istft, sosfilt, stft
+from scipy.signal import butter, get_window, sosfilt
 
 from .detect import DetectConfig, Track, find_tracks
 from .doppler import Flyover
@@ -67,15 +67,45 @@ def voice_activity(y: np.ndarray, sr: int, cfg: ScrubConfig, hop_s: float) -> np
 
 # --------------------------------------------------------------------------- core
 
+# Invertible STFT as weighted overlap-add. scipy.signal.stft/istft build a
+# sliding_window_view that overflows a 32-bit (WASM) build, so the engine could
+# not run the scrubber under Pyodide. This analysis+synthesis-Hann pair is a
+# clean inverse (perfect reconstruction where frames overlap) and its time axis
+# matches the detector's (boundary=None), so notches land on the tracked ridges.
+# The signal is zero-padded by one window each side so the edges reconstruct.
+
 def _stft(y, sr, dc: DetectConfig):
     nper, hop = int(dc.win_s * sr), int(dc.hop_s * sr)
-    f, t, Z = stft(y, fs=sr, nperseg=nper, noverlap=nper - hop, window="hann")
+    win = get_window("hann", nper, fftbins=True)
+    pad = nper
+    yp = np.concatenate([np.zeros(pad), np.asarray(y, dtype=float), np.zeros(pad)])
+    nseg = 1 + int(np.ceil(max(len(yp) - nper, 0) / hop))
+    total = (nseg - 1) * hop + nper
+    if total > len(yp):
+        yp = np.concatenate([yp, np.zeros(total - len(yp))])
+    idx = np.arange(nper)[None, :] + hop * np.arange(nseg)[:, None]
+    frames = yp[idx] * win
+    Z = np.fft.rfft(frames, axis=1).T / win.sum()  # (nfreq, nseg); scaling="spectrum"
+    f = np.fft.rfftfreq(nper, 1.0 / sr)
+    t = (np.arange(nseg) * hop + nper / 2 - pad) / sr   # original timeline
     return f, t, Z, nper, hop
 
 
 def _istft(Z, sr, nper, hop, n):
-    _, y = istft(Z, fs=sr, nperseg=nper, noverlap=nper - hop, window="hann")
-    return y[:n]
+    win = get_window("hann", nper, fftbins=True)
+    pad = nper
+    nseg = Z.shape[1]
+    frames = np.fft.irfft(Z * win.sum(), n=nper, axis=0).T * win  # undo forward scaling, synthesis window
+    total = (nseg - 1) * hop + nper
+    out = np.zeros(total)
+    wsum = np.zeros(total)
+    w2 = win * win
+    for i in range(nseg):
+        a = i * hop
+        out[a:a + nper] += frames[i]
+        wsum[a:a + nper] += w2
+    out = out / np.where(wsum > 1e-8, wsum, 1.0)
+    return out[pad:pad + n]
 
 
 def notch_tracks(Z: np.ndarray, f: np.ndarray, t: np.ndarray, tracks: list[Track], cfg: ScrubConfig) -> np.ndarray:
@@ -175,7 +205,10 @@ def scrub(y: np.ndarray, sr: int, cfg: ScrubConfig | None = None) -> tuple[np.nd
         Z = notch_tracks(Z, f, t, tracks, cfg)
     vad = voice_activity(y, sr, cfg, dc.hop_s)
     if cfg.gate:
-        Z = gate_quiet_frames(Z, f, vad, cfg)
+        # Map each STFT column to its VAD frame by time (the STFT is zero-padded,
+        # so column i is not VAD frame i).
+        col = np.clip((t / dc.hop_s).astype(int), 0, len(vad) - 1)
+        Z = gate_quiet_frames(Z, f, vad[col], cfg)
     out = _istft(Z, sr, nper, hop, n)
 
     decoys: list[Flyover] = []
