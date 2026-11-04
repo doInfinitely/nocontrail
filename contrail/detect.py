@@ -140,13 +140,17 @@ class DetectConfig:
     max_fit_rms_hz: float = 1.0   # residual to the physical Doppler model
     v_range: tuple[float, float] = (40.0, 320.0)   # plausible ground speed, m/s
     d_range: tuple[float, float] = (100.0, 12_000.0)  # plausible slant miss distance, m
-    # VAD gating: in frames where someone is talking, don't pick peaks in the
-    # speech pitch band, where voice harmonics steal peaks from and fragment the
-    # aircraft lines. Lines above vad_pitch_hi, and all lines in silent frames,
-    # are untouched; the tracker bridges the brief gaps. Opt-in: on the synthetic
-    # bench the VAD never fires (the fake speech is too quiet/steady), so this
-    # cannot be tuned or shown to help until there is a real-audio bench with
-    # known flyovers (roadmap). Enable and tune vad_margin_db on real recordings.
+    # VAD gating: in talking frames, drop picked peaks in the speech pitch band.
+    # VALIDATED ON REAL SPEECH AND FOUND NOT TO HELP — kept off, as scaffolding
+    # only. On a 135 s own-voice recording + planted flyovers, no vad_margin_db
+    # beats vad=False: a low margin fires on ~half the frames and guts the real
+    # aircraft lines that live in the speech band (recovery 16→5 of 18), while a
+    # high margin barely fires and nudges spurious tracks up, not down. The
+    # lesson: when speech is near-continuous you cannot blanket-suppress the band
+    # the line sits in. A real fix needs a learned VAD (silero/webrtcvad) and a
+    # targeted rejection (e.g. only peaks coincident with a tracked voice
+    # harmonic), not this band gate. voice_activity() below is kept as the
+    # primitive to build that on. Do not enable vad as-is.
     vad: bool = False
     vad_band: tuple[float, float] = (300.0, 3400.0)   # band whose energy signals speech
     vad_margin_db: float = 12.0                        # dB above the band's floor = speech
