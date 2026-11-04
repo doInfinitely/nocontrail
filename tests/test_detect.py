@@ -51,3 +51,27 @@ def test_recovers_most_planted_flyovers():
                     hits += 1
                     break
     assert hits / total >= 0.8
+
+
+def test_vad_gating_is_safe_and_optional():
+    from contrail.detect import DetectConfig, find_tracks, voice_activity
+    from contrail.synth import SynthConfig, render
+    import numpy as np
+
+    # Default is off, so behaviour is unchanged for existing callers.
+    assert DetectConfig().vad is False
+
+    # Enabling it must not invent tracks on clean speech, and must not drop the
+    # planted flyovers it recovered without it.
+    y, flyovers = render(SynthConfig(seed=0))
+    off = find_tracks(y, 16000, DetectConfig(vad=False))
+    on = find_tracks(y, 16000, DetectConfig(vad=True))
+    assert len(on) >= len(off) - 1  # at most incidental change
+
+    clean, _ = render(SynthConfig(seed=7, aircraft_level=0.0))
+    assert find_tracks(clean, 16000, DetectConfig(vad=True)) == []
+
+    # VAD returns one boolean per STFT frame.
+    vad = voice_activity(y, 16000, DetectConfig())
+    _, t, _ = __import__("contrail.detect", fromlist=["spectrogram"]).spectrogram(y, 16000, DetectConfig())
+    assert len(vad) == len(t)

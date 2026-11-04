@@ -140,6 +140,17 @@ class DetectConfig:
     max_fit_rms_hz: float = 1.0   # residual to the physical Doppler model
     v_range: tuple[float, float] = (40.0, 320.0)   # plausible ground speed, m/s
     d_range: tuple[float, float] = (100.0, 12_000.0)  # plausible slant miss distance, m
+    # VAD gating: in frames where someone is talking, don't pick peaks in the
+    # speech pitch band, where voice harmonics steal peaks from and fragment the
+    # aircraft lines. Lines above vad_pitch_hi, and all lines in silent frames,
+    # are untouched; the tracker bridges the brief gaps. Opt-in: on the synthetic
+    # bench the VAD never fires (the fake speech is too quiet/steady), so this
+    # cannot be tuned or shown to help until there is a real-audio bench with
+    # known flyovers (roadmap). Enable and tune vad_margin_db on real recordings.
+    vad: bool = False
+    vad_band: tuple[float, float] = (300.0, 3400.0)   # band whose energy signals speech
+    vad_margin_db: float = 12.0                        # dB above the band's floor = speech
+    vad_pitch_hi: float = 450.0                        # suppress speech-frame peaks below this Hz
 
 
 def _whiten(S_db: np.ndarray, med_bins: int = 25) -> np.ndarray:
@@ -183,10 +194,28 @@ def _smooth_residual(times: np.ndarray, freqs: np.ndarray) -> float:
     return float(np.sqrt(np.mean((freqs - fit) ** 2)))
 
 
+def voice_activity(y: np.ndarray, sr: int, cfg: DetectConfig) -> np.ndarray:
+    """Per-STFT-frame boolean: is someone talking? Energy in the voice band vs
+    its own floor, measured on the same frames the spectrogram uses. Simple on
+    purpose; swap in silero/webrtcvad for real use."""
+    from scipy.signal import butter, sosfilt
+    nper, hop = int(cfg.win_s * sr), int(cfg.hop_s * sr)
+    if len(y) < nper:
+        return np.zeros(0, dtype=bool)
+    sos = butter(4, cfg.vad_band, btype="band", fs=sr, output="sos")
+    v = sosfilt(sos, y)
+    nseg = 1 + (len(y) - nper) // hop
+    idx = np.arange(nper)[None, :] + hop * np.arange(nseg)[:, None]
+    e = 10 * np.log10(np.mean(v[idx] ** 2, axis=1) + 1e-12)
+    floor = float(np.percentile(e, 20))
+    return e > floor + cfg.vad_margin_db
+
+
 def find_tracks(y: np.ndarray, sr: int, cfg: DetectConfig | None = None) -> list[Track]:
     cfg = cfg or DetectConfig()
     f, t, S_db = spectrogram(y, sr, cfg)
     W = _whiten(S_db)
+    vad = voice_activity(y, sr, cfg) if cfg.vad else None
 
     # peaks per frame, with parabolic sub-bin interpolation
     df = float(f[1] - f[0])
@@ -194,8 +223,11 @@ def find_tracks(y: np.ndarray, sr: int, cfg: DetectConfig | None = None) -> list
     for j in range(W.shape[1]):
         col = W[:, j]
         idx, props = find_peaks(col, prominence=cfg.peak_prominence_db)
+        speech = vad is not None and j < len(vad) and bool(vad[j])
         pk = []
         for i in idx:
+            if speech and f[i] < cfg.vad_pitch_hi:
+                continue  # voice harmonics dominate this band while talking
             if 0 < i < len(col) - 1:
                 a, b, c = col[i - 1], col[i], col[i + 1]
                 denom = a - 2 * b + c

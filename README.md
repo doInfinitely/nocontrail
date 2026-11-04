@@ -131,8 +131,12 @@ print("leak score:", leak_score(tracks))
 
 ## Roadmap
 
-1. **VAD gating** — only pick peaks in speech-free frames (silero/webrtcvad);
-   fixes lines inside the pitch band and should cut tracker fragmentation.
+1. **VAD gating** — mechanism added (`DetectConfig.vad`, opt-in): in talking
+   frames it drops peaks in the speech pitch band so voice harmonics don't
+   fragment the aircraft lines. Off by default — on the synthetic bench the VAD
+   never fires (the fake speech is too quiet/steady to trip it), so it can't be
+   tuned or shown to help until there's a real-audio bench with known flyovers
+   (#4). Swap the energy VAD for silero/webrtcvad when tuning on real audio.
 2. **Group harmonics by flyover** — done, on synthetic clips. Lines join a group
    when their measured frequency ratio snaps to a small integer ratio and one
    flyover model fits them jointly. The leak score now counts planes, not lines.
