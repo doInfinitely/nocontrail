@@ -63,13 +63,22 @@ def build(folder: Path, name: str, auditor: str = "") -> str:
     hit_windows = sum(1 for r in reports for w in r["windows"] if w["groups"])
     confirmed = sum(1 for r in reports for w in r["windows"] for g in w["groups"] if _plausible(g))
 
-    verdict_word, verdict_fg, verdict_bg = _band(peak)
-    if peak < GREEN:
+    # The verdict must track PLAUSIBLE detections, not the raw leak score: a
+    # single physically-impossible fit (e.g. airliner speed at rooftop height)
+    # can push one window's score past 0.5 and cry wolf. Band on the strongest
+    # window that actually contains a plausible flyover.
+    peak_plausible = max(
+        (w["leak"] for r in reports for w in r["windows"] if any(_plausible(g) for g in w["groups"])),
+        default=0.0,
+    )
+    verdict_word, verdict_fg, verdict_bg = _band(peak_plausible)
+    if peak_plausible < GREEN:
         verdict = "No usable location leak found in this sample."
         explain = (f"Nothing in the {n_win} stretches we listened to had the signature an attacker "
-                   f"would need. The few faint candidates were single lines with no harmonic "
-                   f"confirmation, which is what a chance match to game or music audio looks like.")
-    elif peak < AMBER:
+                   f"would need. The few candidates were single lines with no harmonic confirmation, "
+                   f"or fits at physically impossible speeds — what a chance match to game or music "
+                   f"audio looks like, not a real flyover.")
+    elif peak_plausible < AMBER:
         verdict = "Faint traces, probably not usable, worth a closer look."
         explain = ("At least one stretch showed a plausible flyover. On its own that is not enough to "
                    "locate you, but it means the mic is picking up the room. See the flagged timestamps.")
@@ -146,7 +155,7 @@ details{{margin-top:12px}} summary{{cursor:pointer;color:var(--muted)}}
 <div class="facts">
   <span><b>{len(reports)}</b> streams, <b>{total_h:.0f} h</b> total</span>
   <span>listened to <b>{listened_h:.1f} h</b> (about 1 minute in every {round(1/frac) if frac else '∞'})</span>
-  <span>peak score <b>{peak:.2f}</b> / 1.00</span>
+  <span>peak score <b>{peak:.2f}</b> / 1.00 (raw; <b>{peak_plausible:.2f}</b> after discarding impossible fits)</span>
   <span>{hit_windows} stretches with any candidate, <b>{confirmed}</b> plausible</span>
 </div>
 
