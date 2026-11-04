@@ -1,5 +1,6 @@
 """contrail audit <wav>    — list detected flyovers, their lines, and a leak score
    contrail scrub <in> <out> [--no-gate] [--no-notch] [--no-decoy] [--decoys N]
+   contrail report <folder-of-json> --name <who> [--by <you>] -o audit.html
 """
 from __future__ import annotations
 
@@ -10,6 +11,7 @@ import numpy as np
 from scipy.io import wavfile
 
 from .detect import find_tracks, group_flyovers, leak_score
+from .report import main as report_main
 from .scrub import ScrubConfig, scrub
 
 
@@ -62,6 +64,8 @@ def main(argv=None) -> int:
     s.add_argument("--no-gate", action="store_true"); s.add_argument("--no-notch", action="store_true")
     s.add_argument("--no-decoy", action="store_true"); s.add_argument("--decoys", type=int, default=8)
     s.add_argument("--seed", type=int, default=None); s.set_defaults(fn=cmd_scrub)
+    r = sub.add_parser("report", add_help=False); r.add_argument("rest", nargs=argparse.REMAINDER)
+    r.set_defaults(fn=lambda a: report_main(a.rest))
     args = p.parse_args(argv)
     return args.fn(args)
 
