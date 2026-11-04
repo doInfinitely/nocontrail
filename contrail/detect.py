@@ -16,7 +16,7 @@ from fractions import Fraction
 from math import gcd, lcm
 
 import numpy as np
-from scipy.signal import find_peaks, stft
+from scipy.signal import find_peaks, get_window
 
 from .doppler import C_SOUND
 
@@ -150,11 +150,27 @@ def _whiten(S_db: np.ndarray, med_bins: int = 25) -> np.ndarray:
 
 
 def spectrogram(y: np.ndarray, sr: int, cfg: DetectConfig):
+    """Short-time Fourier magnitude in dB over the low band.
+
+    Frames are built explicitly rather than via scipy.signal.stft: that routine
+    takes a sliding_window_view whose logical size overflows a 32-bit build
+    (Pyodide/WASM), and the engine ships into the desktop app that way. This
+    matches stft(window="hann", scaling="spectrum", boundary=None, padded=False)
+    to floating-point rounding; verified against it downstream."""
     nper = int(cfg.win_s * sr)
     hop = int(cfg.hop_s * sr)
-    f, t, Z = stft(y, fs=sr, nperseg=nper, noverlap=nper - hop, window="hann", padded=False, boundary=None)
+    win = get_window("hann", nper, fftbins=True)
+    n = len(y)
+    if n < nper:
+        return np.array([]), np.array([]), np.zeros((0, 0))
+    nseg = 1 + (n - nper) // hop
+    idx = np.arange(nper)[None, :] + hop * np.arange(nseg)[:, None]
+    frames = y[idx] * win
+    Z = np.fft.rfft(frames, axis=1) / win.sum()
+    f = np.fft.rfftfreq(nper, 1.0 / sr)
+    t = (np.arange(nseg) * hop + nper / 2) / sr
     band = (f >= cfg.f_lo) & (f <= cfg.f_hi)
-    S_db = 20 * np.log10(np.abs(Z[band]) + 1e-10)
+    S_db = 20 * np.log10(np.abs(Z.T[band]) + 1e-10)
     return f[band], t, S_db
 
 
