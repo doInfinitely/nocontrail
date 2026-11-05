@@ -5,15 +5,18 @@ soundproof. Here's the honest read.
 
 ## What we found
 
-Planes passing over your place leave a faint, drifting tone in your stream audio. Our check
-found that signal in most of your streams. In any single short clip it's weak — not enough on
-its own to pin a spot. **But that weak-per-clip number is misleading.** The check only listened
-to about 4% of your footage, and the method that locates someone doesn't need a strong single
-clip — it needs a few good plane passes collected across a whole stream. Over a full multi-hour
-stream, there are likely enough of those.
+Planes passing over your place leave a faint, drifting tone in your stream audio. In any single
+short clip it's weak — not enough on its own to pin a spot. **But that weak-per-clip number is
+misleading,** because the method that locates someone doesn't need a strong single clip — it needs
+a few good plane passes collected across a whole stream.
 
-So: **the raw material to work out where you record is probably sitting in your public VODs.**
-That's not the same as someone having done it, but it's enough to take seriously.
+We've now listened to **all of your footage** (not a sample this time — every hour). The result:
+**22 of your 26 streams each contain enough clean plane passes to narrow down where you record.**
+Only a few short/broken files don't. In plain terms:
+
+So: **the raw material to work out where you record is sitting in your public VODs — in most of
+them, not just a few.** That's not the same as someone having done it, but it's enough to take
+seriously.
 
 ## Your three questions
 
@@ -21,10 +24,13 @@ That's not the same as someone having done it, but it's enough to take seriously
 helps every future recording. A noise gate that cuts your room sound when you're not talking
 takes away the part of the signal this relies on. Worth doing no matter what else you decide.
 
-**Deleting VODs — yes for the worst ones, but know the limit.** Taking them down removes them
+**Deleting VODs — yes, and it's most of them, but know the limit.** Taking them down removes them
 from public view. It does **not** pull back copies anyone already downloaded. So deletion lowers
-your ongoing exposure; it can't undo the past. If you want to prioritize, we can tell you which
-streams carry the most signal once the full scan finishes.
+your ongoing exposure; it can't undo the past. We've ranked your streams by how much signal each
+one carries — the full list is in the technical report, but if you're deleting a few at a time,
+start with your four longest October streams (the 10–12 hour ones from Oct 13, 14, 15 and 17);
+those carry by far the most. One thing to watch: a shorter stream can be riskier than a long one,
+so go by our ranking, not by length.
 
 **Moving sooner — the audio check can't decide this for you.** It can tell you the ingredients to
 locate you are public. It can't tell you whether your exact address is recoverable, or whether

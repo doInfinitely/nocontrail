@@ -1,0 +1,13 @@
+{
+  "file": "2026-09-25_1.mp4",
+  "duration_s": 10743.6,
+  "coverage": "full",
+  "tiles": 135,
+  "tiles_processed": 135,
+  "tiles_errored": 0,
+  "flyover_detections": 26,
+  "clean_flyovers": 9,
+  "min_dur_s": 40.0,
+  "min_drop_hz": 15.0,
+  "crosses_trilateration_bar": true
+}

@@ -1,0 +1,13 @@
+{
+  "file": "2022-05-03_1.mp4",
+  "duration_s": 58.8,
+  "coverage": "full",
+  "tiles": 1,
+  "tiles_processed": 1,
+  "tiles_errored": 0,
+  "flyover_detections": 1,
+  "clean_flyovers": 0,
+  "min_dur_s": 40.0,
+  "min_drop_hz": 15.0,
+  "crosses_trilateration_bar": false
+}
