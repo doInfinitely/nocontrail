@@ -136,6 +136,36 @@ files are **not** safe to circulate — see omissions.
 
 ---
 
+## Decision guidance (delete / move / soundproof)
+
+The subject is using this audit to decide whether to delete VODs, expedite a move, or soundproof.
+These measure different things; keep them separate.
+
+- **The accumulation count measures exploitability of *published audio*** — whether the material to
+  locate the subject exists in public VODs. It does **not** establish that anyone has located them,
+  or that their *current address* is recoverable.
+
+| Decision | What it addresses | Call |
+|---|---|---|
+| **Soundproof / mic noise gate** | Future exposure | **Do it regardless.** Lowest-regret, cheap, attacks the signature at its source. Signal is present in the audio. |
+| **Delete VODs** | Already-published exposure | **Yes for high-count streams.** Caveat: deletion is **not retroactive** — third parties who downloaded a VOD keep it. Lowers ongoing, not past, risk. |
+| **Expedite move** | Whether *current location* is already derivable | **Audit can't decide this.** High counts mean the ingredients are public — reason not to dismiss a move — but not proof the exact spot is recoverable. |
+
+**Confirming actual locatability** (for the move decision) is a *self-test the subject runs locally*:
+score their real coordinates against nearby decoys (`doppler/pipeline/truth_check.py`). If the true
+location beats the decoys, the audio discriminates their position and the move is well-founded. This
+requires their real location and must stay on their own machine — the auditor does not collect,
+handle, or process it. Note this is a **known-location self-check**, not the Lower-48 location
+*search*, which this engagement does not run against the subject.
+
+**Escalation:** if the move is driven by a specific person or threat, that exceeds what audio
+analysis settles. A digital-safety / anti-stalking organization or law enforcement should run a
+threat assessment **in parallel**, not after these numbers.
+
+A subject-facing plain-language version of this guidance is in `reports/for_kairuichan.md`.
+
+---
+
 ## Deliberate omissions
 
 This report excludes, by design, everything that would help convert a detection into a position:
