@@ -5,3 +5,8 @@ build/
 dist/
 .pytest_cache/
 demo/*.wav
+.venv/
+.DS_Store
+# subject audit data — contains per-flyover geometry; keep local
+audits/
+audits_report.html
