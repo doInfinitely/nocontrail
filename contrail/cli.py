@@ -1,5 +1,5 @@
 """contrail audit <wav>    — list detected flyovers, their lines, and a leak score
-   contrail scrub <in> <out> [--no-gate] [--no-notch] [--no-decoy] [--decoys N]
+   contrail scrub <in> <out> [--no-gate] [--no-notch] [--decoy [--decoys N]]
    contrail report <folder-of-json> --name <who> [--by <you>] -o audit.html
 """
 from __future__ import annotations
@@ -45,12 +45,13 @@ def cmd_audit(args) -> int:
 
 def cmd_scrub(args) -> int:
     y, sr = _load(args.input)
-    cfg = ScrubConfig(gate=not args.no_gate, notch=not args.no_notch, decoy=not args.no_decoy,
+    cfg = ScrubConfig(gate=not args.no_gate, notch=not args.no_notch, decoy=args.decoy,
                       decoy_count=args.decoys, seed=args.seed)
     out, rep = scrub(y, sr, cfg)
     _save(args.output, out, sr)
     print(f"before: {len(rep.tracks_before)} line(s), leak {leak_score(rep.tracks_before):.2f}")
-    print(f"after:  {len(rep.tracks_after)} line(s) detected (real + {len(rep.decoys)} decoys), "
+    decoy_note = f" + {len(rep.decoys)} decoys" if rep.decoys else ""
+    print(f"after:  {len(rep.tracks_after)} line(s) detected{decoy_note}, "
           f"speech in {rep.vad_speech_fraction:.0%} of frames")
     print(f"wrote {args.output}")
     return 0
@@ -62,7 +63,10 @@ def main(argv=None) -> int:
     a = sub.add_parser("audit"); a.add_argument("input"); a.set_defaults(fn=cmd_audit)
     s = sub.add_parser("scrub"); s.add_argument("input"); s.add_argument("output")
     s.add_argument("--no-gate", action="store_true"); s.add_argument("--no-notch", action="store_true")
-    s.add_argument("--no-decoy", action="store_true"); s.add_argument("--decoys", type=int, default=8)
+    s.add_argument("--decoy", action="store_true",
+                   help="optional defense-in-depth: mix in decoy flyovers (off by default; "
+                        "does not defeat a flight-data attacker)")
+    s.add_argument("--decoys", type=int, default=8)
     s.add_argument("--seed", type=int, default=None); s.set_defaults(fn=cmd_scrub)
     r = sub.add_parser("report", add_help=False); r.add_argument("rest", nargs=argparse.REMAINDER)
     r.set_defaults(fn=lambda a: report_main(a.rest))

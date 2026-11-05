@@ -1,17 +1,24 @@
-"""Remove or drown aircraft-Doppler signatures in audio you own.
+"""Remove aircraft-Doppler signatures in audio you own.
 
-Three tiers, composable. All operate in the same STFT domain the detector
-uses (1 s Hann windows, 0.25 s hop) so what the scrubber touches is what the
-detector sees.
+The two defenses that actually hold, plus one optional layer, all in the same
+STFT domain the detector uses (1 s Hann windows, 0.25 s hop) so what the
+scrubber touches is what the detector sees.
 
+  notch  — for each detected ridge (and its harmonics), zero a narrow band
+           that follows the ridge frame by frame. Surgical. This is the primary
+           defense: it removes the real line.
   gate   — in frames with no voice activity, attenuate everything below
            `gate_f_hi`. Cheap, inaudible, removes the clean stretches a fitter
            needs most.
-  notch  — for each detected ridge (and its harmonics), zero a narrow band
-           that follows the ridge frame by frame. Surgical.
-  decoy  — mix in synthetic flyovers with random, physically plausible
-           parameters at the same level as the real lines. A fitter now sees
-           N fakes per real line, with nothing to tell them apart.
+  decoy  — OPTIONAL, off by default, defense-in-depth only. Mix in synthetic
+           flyovers at the real-line level so a fitter sees extra candidates.
+           This only confuses an attacker who is NOT cross-referencing flight
+           data: the decoys are physically plausible but correspond to no real
+           aircraft, so an attacker with ADS-B/flight history discards them for
+           free. It does not defeat the flight-data matching attack, and at an
+           inaudible level it is unreliable (most decoys don't resolve as clean
+           tracks). Notch + gate are what you rely on; decoys are a bonus
+           against a casual attacker, nothing more.
 
 Order: notch → gate → decoy. Decoys go in last so the gate doesn't eat them.
 """
@@ -40,8 +47,8 @@ class ScrubConfig:
     notch_half_width_hz: float = 2.5
     notch_harmonics: int = 3
     notch_atten_db: float = 60.0
-    # decoy
-    decoy: bool = True
+    # decoy — optional defense-in-depth, off by default (see module docstring)
+    decoy: bool = False
     decoy_count: int = 8
     decoy_level: float | None = None   # None → match the measured real-line level
     decoy_harmonics: int = 3
