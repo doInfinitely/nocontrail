@@ -30,6 +30,7 @@ from scipy.io import wavfile
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from contrail.detect import find_tracks, group_flyovers  # noqa: E402
+from contrail.report import _plausible  # noqa: E402
 
 
 def duration_s(path: str) -> float:
@@ -58,6 +59,7 @@ def accumulate(path: str, tile_s: float, overlap_s: float, min_dur: float, min_d
     # Each clean flyover recorded as (global_tc, f0) only, for de-duplication across tiles.
     seen: list[tuple[float, float]] = []
     clean = 0
+    clean_plausible = 0
     any_fly = 0
     tiles_ok = 0
     tiles_err = 0
@@ -85,6 +87,10 @@ def accumulate(path: str, tile_s: float, overlap_s: float, min_dur: float, min_d
                 continue
             seen.append((gtc, g.fit.f0))
             clean += 1
+            # same realism filter the report uses; geometry is checked, never stored
+            if _plausible({"v_mps": g.fit.v, "miss_m": g.fit.d, "harmonics": g.harmonics,
+                           "rms_frac": g.fit.rms / g.fit.f0}):
+                clean_plausible += 1
 
     return {
         "file": Path(path).name,
@@ -95,10 +101,12 @@ def accumulate(path: str, tile_s: float, overlap_s: float, min_dur: float, min_d
         "tiles_errored": tiles_err,
         "flyover_detections": any_fly,
         "clean_flyovers": clean,
+        "clean_plausible_flyovers": clean_plausible,
         "min_dur_s": min_dur,
         "min_drop_hz": min_drop,
         # three clean flyovers at distinct geometries is the detector's own trilateration bar
         "crosses_trilateration_bar": clean >= 3,
+        "crosses_trilateration_bar_plausible": clean_plausible >= 3,
     }
 
 
@@ -118,6 +126,7 @@ def main() -> None:
           f"({rep['tiles_processed']}/{rep['tiles']} tiles)")
     print(f"  flyover detections: {rep['flyover_detections']}")
     print(f"  CLEAN flyovers (>={a.min_dur:.0f}s, >={a.min_drop:.0f}Hz): {rep['clean_flyovers']}")
+    print(f"  CLEAN + plausible (speed/height/confirmation): {rep['clean_plausible_flyovers']}")
     print(f"  crosses 3-flyover trilateration bar: {rep['crosses_trilateration_bar']}")
     if a.report:
         Path(a.report).write_text(json.dumps(rep, indent=2))
