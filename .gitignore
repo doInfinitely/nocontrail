@@ -2,6 +2,9 @@ __pycache__/
 *.pyc
 *.egg-info/
 build/
+# ...but app/build/ is electron-builder source (entitlements, notarize hook, icon), not output
+!app/build/
+!app/build/**
 dist/
 .pytest_cache/
 demo/*.wav

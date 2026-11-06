@@ -3,17 +3,74 @@
   "version": "0.0.1",
   "description": "No Contrail — audit your recordings for aircraft-Doppler location leaks, fully on your machine.",
   "private": true,
+  "author": "No Contrail",
   "main": "main.js",
   "scripts": {
     "sync-engine": "node scripts/sync-engine.js",
     "prewarm": "node scripts/prewarm.js",
     "postinstall": "node scripts/sync-engine.js",
-    "start": "node scripts/sync-engine.js && electron ."
+    "start": "node scripts/sync-engine.js && electron .",
+    "prepackage": "node scripts/sync-engine.js && node scripts/prewarm.js",
+    "pack": "npm run prepackage && electron-builder --dir",
+    "dist": "npm run prepackage && electron-builder"
   },
   "devDependencies": {
-    "electron": "^33.2.1"
+    "@electron/notarize": "^2.5.0",
+    "electron": "^33.2.1",
+    "electron-builder": "^25.1.8"
   },
   "dependencies": {
     "pyodide": "0.27.2"
+  },
+  "build": {
+    "appId": "audio.nocontrail.app",
+    "productName": "No Contrail",
+    "copyright": "No Contrail",
+    "asar": false,
+    "afterSign": "build/notarize.js",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "renderer/**",
+      "engine/**",
+      "scripts/**",
+      "node_modules/pyodide/**",
+      "!**/*.map",
+      "!**/{.DS_Store,*.log}"
+    ],
+    "extraMetadata": {
+      "main": "main.js"
+    },
+    "mac": {
+      "category": "public.app-category.utilities",
+      "icon": "build/icon.icns",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        }
+      ]
+    },
+    "dmg": {
+      "title": "No Contrail ${version}"
+    }
   }
 }
