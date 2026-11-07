@@ -50,6 +50,11 @@ you never show your location on camera.
 I found your inquiry address on your channel and wanted to flag it, since
 public VODs are exactly where this shows up.
 
+This isn't hypothetical — I tested it on myself. I "pseudo-streamed" with
+nothing but a mic and no soundproofing (about the cheapest setup possible) and
+still pinned my own house to within 300 meters from the audio alone. I put the
+whole walkthrough in a short video: {{video_url}}
+
 We offer a paid audit: send us archive audio, we report back within 48 hours
 on whether a location is recoverable and how to remove it. Pricing is $2 per
 hour of footage ($50 minimum). No account, nothing runs in the cloud — the
@@ -67,6 +72,19 @@ You received this because your contact address is listed publicly on your
 Don't want to hear from us again? Reply with "unsubscribe" and you're off the
 list for good — or use the one-click link in this email's headers.
 ```
+
+## The proof line + video ({{video_url}})
+
+The self-test paragraph is the strongest thing in the email — it's your own
+result, so keep it exact: mic only, no soundproofing, ~300 m. Don't inflate it.
+
+`{{video_url}}` is the YouTube explainer, still in production. Don't send a dead
+link:
+- **If the video is live:** paste the URL.
+- **If it isn't yet:** either cut the "I put the whole walkthrough in a short
+  video" sentence, or change it to "I'm putting the whole walkthrough in a short
+  video — reply and I'll send it the moment it's up." Promising a link you then
+  deliver is a clean reason to re-contact a warm reply.
 
 ## Why each footer line is there (don't cut these)
 

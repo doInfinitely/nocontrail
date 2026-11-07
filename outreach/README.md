@@ -84,6 +84,10 @@ not legal advice.
 - **List hygiene first:** verify `sendable.csv` (Instantly's verifier or
   NeverBounce/ZeroBounce) before the first send; pipe bounces into
   `add_suppression.py --stdin --reason bounced`. Bounces burn paid accounts fast.
+- **Proof point in the email:** the self-test — pseudo-streamed with a mic, no
+  soundproofing, pinned own house to ~300 m — plus a YouTube explainer
+  (`{{video_url}}`, in production). Don't ship a dead video link; see
+  `template.md` for how to handle it before the video is live.
 
 ## Generic warmup notes
 
