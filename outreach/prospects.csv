@@ -1,0 +1,9 @@
+email,handle,source,date_added,status,notes
+# The send list. One row per prospect. Edit by hand or append from your scraper.
+# email      the business/inquiry address the streamer published
+# handle     their Twitch handle (for the greeting / your own reference)
+# source     WHERE you found the address (profile URL, about page). Your per-contact proof.
+# date_added YYYY-MM-DD
+# status     active | paused   (paused = never send, but not a legal opt-out)
+# notes      anything (tier, last contacted, etc.)
+# Lines beginning with # are ignored. Delete these comment lines whenever you like.

@@ -1,0 +1,5 @@
+email,reason,date,notes
+# The permanent, GLOBAL do-not-email list. Append-only. Never delete a row.
+# reason  unsubscribed | complained | bounced | manual
+# Any email here is filtered out of every send, forever, regardless of source.
+# Add rows with:  python3 outreach/add_suppression.py you@example.com --reason unsubscribed
