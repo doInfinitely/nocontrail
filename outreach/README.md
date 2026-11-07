@@ -53,3 +53,40 @@ for). The EU/UK (GDPR + ePrivacy) and Canada (CASL) require prior consent for
 unsolicited email and are a different legal regime — if you knowingly add
 recipients there, handle them separately. This tooling is operational hygiene,
 not legal advice.
+
+## Setup decisions
+
+- **Postal address (`{{postal_address}}`):** use the business's registered
+  public address — `Remy Ochei Inc`, already public as the company's
+  registered address. It satisfies the CAN-SPAM physical-address requirement,
+  and no PO box / virtual mailbox is needed. (A virtual mailbox stays an
+  option if we later want the footer address off the home address.)
+- **Sending, NOT via Mailgun:** transactional ESPs (Mailgun, SendGrid,
+  Postmark) require recipient consent and ban unsolicited/cold email in their
+  acceptable-use policies — a cold batch to scraped addresses risks account
+  suspension. Keep Mailgun/primary domain for real mail (audit reports,
+  replies, invoices). Send the cold campaign from a dedicated cold-email
+  platform on a separate sending subdomain.
+
+## Sending + warmup setup
+
+What to sign up for (both include built-in mailbox warmup, inbox rotation, and
+per-inbox send throttling — the things Mailgun won't do for cold outreach):
+
+- **Instantly** (~$37–47/mo) — easiest to start, flat pricing with unlimited
+  mailboxes, simple inbox rotation. Good default for a solo operator.
+- **Smartlead** (~$39/mo) — best-in-class rotation and deliverability
+  controls, more of a power-user tool. Pick this if we scale to many mailboxes.
+
+Either one works; verify current pricing on the vendor site before signing up.
+Then, inside whichever tool:
+
+1. **Sending identity:** a separate subdomain (e.g. `get.nocontrail.audio`),
+   NOT the primary domain. Either connect a couple of Google Workspace / M365
+   mailboxes on it, or buy the platform's managed domains + mailboxes.
+2. **Authenticate:** SPF, DKIM, DMARC on the sending subdomain, all passing.
+3. **Warm up for 2–4 weeks** before any real send — the tool ramps volume
+   automatically (start ~10–20/day). "Warmup" here = mailbox/engagement
+   warmup, not Mailgun's dedicated-IP warmup.
+4. Only then run `filter_sendable.py` and send to `sendable.csv`, keeping the
+   spam-complaint rate under 0.3%.
