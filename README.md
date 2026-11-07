@@ -210,6 +210,12 @@ Two details keep the count honest:
   one already counted. Three real passes stacked inside 95 s on that recording
   (different slopes, speeds and miss distances) stay three.
 
+What the count is not: a tally of aircraft. It is the number of lines the
+attacker's fit would accept, and on the one recording checked against flight
+data, 1 of 12 matched an ADS-B track (roadmap item 4). Read it as the ceiling
+on what an attacker could use, and the "confirmed" subset as the nearer guess
+at the floor.
+
 The per-window score is still printed, labelled as what it is: one window's
 score, which does not add up and is not a verdict on the file. The report's
 verdict goes red when the accumulated count of clean flyovers reaches three,
@@ -251,7 +257,27 @@ however low each stretch scores on its own.
    usable passes; with the 7 dB floor and harmonic de-duplication, **12
    distinct passes in 40 minutes**, 18 per hour, every one standing 8–17 dB
    over the floor — against a count of 2 under the old 40 s / 15 Hz bar.
-   Recall, not truth: none is ADS-B-verified yet.
+   **Checked against ADS-B for that day (site-local, ±60 s, 2 km): 1 of the 12
+   matches a real aircraft** — the tone the attacker used, a Cessna 208 at
+   1.7 km slant and 85 m/s against our fit of 1.6 km and 78 m/s; its real track
+   predicts the traced tone from the true site at 0.66 Hz rms. The other 11
+   have no ADS-B return within about 4 km; every nearby return is a jet at
+   altitude that cannot be the source of a sub-200 Hz blade-pass tone. The
+   measured swing of each traced line says what they can be: a source moving at
+   v shifts a tone by at most (c+v)/(c−v), and 8 of the 12 lines swing by
+   1.21–1.62×, which needs 33–81 m/s — aircraft, not road vehicles (a car at
+   10 m/s manages 1.06×). Coverage is not the gap: the same feed saw 62
+   distinct aircraft under 500 m within 5 km of the site that day, so these
+   were flying without ADS-B Out. Three lines swing under 1.09× and one 1.12×;
+   those four could be ground sources and stay unresolved. Either way the
+   unmatched passes are of no use to an attacker, whose localiser only keeps a
+   tone it can match to a flight track — so the detector count is a **ceiling**
+   on usable passes, and on this recording the matchable rate was 1.5 per hour,
+   not 18. A second ceiling: that localiser only scans 100–200 Hz, and 7 of the
+   12 lines here sit partly or wholly below 100 Hz. The 7 dB floor
+   rejected 8 further lines; none of them had a real aircraft within 2 km either,
+   so the floor cost no real pass here. The "confirmed" tier (0 of 12) was the
+   better proxy for ADS-B truth on this file than the clean count.
 5. Optional ADS-B lookup of *your own declared position* to turn "a plane
    passed" into "this plane, at this time", for a stronger leak estimate.
 

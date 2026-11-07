@@ -256,6 +256,7 @@ class Exposure:
             "min_dur_s": self.cfg.min_dur_s,
             "min_drop_frac": self.cfg.min_drop_frac,
             "max_fit_rms_hz": self.cfg.max_fit_rms_hz,
+            "min_power_db": self.cfg.min_power_db,
             # per-window; does not add up across windows and is not an archive verdict
             "peak_window_score": round(self.peak_window_score, 3),
             "crosses_trilateration_bar": self.crosses_bar,

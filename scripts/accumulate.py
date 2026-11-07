@@ -78,16 +78,20 @@ def main() -> None:
     ap.add_argument("--overlap-s", type=float, default=90.0)
     ap.add_argument("--min-dur", type=float, default=12.0, help="clean-flyover minimum duration (s)")
     ap.add_argument("--min-drop-pct", type=float, default=3.0, help="clean-flyover minimum drop, %% of frequency")
+    ap.add_argument("--min-power-db", type=float, default=7.0,
+                    help="a counted line must sit this far over the whitened floor (dB); 0 disables")
+    ap.add_argument("--analysis-sr", type=int, default=8000)
     ap.add_argument("--report", default=None)
     a = ap.parse_args()
 
-    cfg = CleanConfig(min_dur_s=a.min_dur, min_drop_frac=a.min_drop_pct / 100.0,
-                      tile_s=a.tile_s, overlap_s=a.overlap_s)
+    cfg = CleanConfig(min_dur_s=a.min_dur, min_drop_frac=a.min_drop_pct / 100.0, min_power_db=a.min_power_db,
+                      tile_s=a.tile_s, overlap_s=a.overlap_s, analysis_sr=a.analysis_sr)
     rep = accumulate(a.video, cfg)
     print(f"{rep['file']}: {rep['duration_s']/3600:.1f} h, full coverage "
           f"({rep['tiles_processed']}/{rep['tiles']} tiles)")
     print(f"  flyover detections: {rep['flyover_detections']}")
-    print(f"  CLEAN flyovers (>={a.min_dur:.0f} s, >={a.min_drop_pct:.0f}% drop, possible fit): {rep['clean_flyovers']}")
+    print(f"  CLEAN flyovers (>={a.min_dur:.0f} s, >={a.min_drop_pct:.0f}% drop, fit <= {cfg.max_fit_rms_hz:.1f} Hz, "
+          f">={a.min_power_db:.0f} dB over the floor, possible fit): {rep['clean_flyovers']}")
     print(f"  confirmed by harmonics or a tight fit: {rep['clean_confirmed_flyovers']}")
     print(f"  peak {a.tile_s:.0f}-s window score: {rep['peak_window_score']:.2f} (per window; does not add up)")
     print(f"  crosses 3-flyover trilateration bar: {rep['crosses_trilateration_bar']}")
