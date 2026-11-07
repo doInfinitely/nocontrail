@@ -39,24 +39,36 @@ def _title_from(name: str) -> str:
     return t
 
 
+def _possible(g: dict) -> bool:
+    from .accumulate import physically_possible
+    return physically_possible(g["v_mps"], g["miss_m"])
+
+
 def _plausible(g: dict) -> bool:
-    """A real flyover: plausible speed and either harmonics or a tight fit.
-    One rule, shared with the CLI and the app (contrail.accumulate)."""
+    """Physically possible AND confirmed by harmonics or a tight fit. One rule,
+    shared with the CLI and the app (contrail.accumulate)."""
     from .accumulate import plausible_params
     return plausible_params(g["v_mps"], g["miss_m"], len(g.get("harmonics", [])), g.get("rms_frac", 1))
 
 
-def _clean(g: dict, min_dur: float = 40.0, min_drop: float = 15.0) -> bool:
-    """Long and deep enough to carry usable geometry. Older audit JSON has no
-    duration/drop per group; those count as clean if plausible."""
-    return g.get("dur_s", min_dur) >= min_dur and g.get("drop_hz", min_drop) >= min_drop
+def _clean(g: dict) -> bool:
+    """Usable by the attacker: its acceptance bar (>= 12 s, >= 3 % drop, fit
+    under 1.2 Hz) and a physically possible fit. Older audit JSON lacks
+    duration/drop/f0 per group; missing fields pass."""
+    from .accumulate import CleanConfig
+    cfg = CleanConfig()
+    f0 = g.get("f0_hz", 150.0)
+    return (g.get("dur_s", cfg.min_dur_s) >= cfg.min_dur_s
+            and g.get("drop_hz", cfg.min_drop_frac * f0) >= cfg.min_drop_frac * f0
+            and g.get("rms_frac", 0.0) * f0 <= cfg.max_fit_rms_hz
+            and _possible(g))
 
 
 def _load_full_coverage(folder: Path | None) -> dict | None:
     """Totals from full-coverage JSON (contrail audit --json, or accumulate.py)."""
     if not folder:
         return None
-    clean = plaus = 0
+    clean = conf = 0
     seconds = 0.0
     n = 0
     for p in sorted(Path(folder).glob("*.json")):
@@ -68,11 +80,11 @@ def _load_full_coverage(folder: Path | None) -> dict | None:
                 continue
             n += 1
             clean += r["clean_flyovers"]
-            plaus += r.get("clean_plausible_flyovers", 0)
+            conf += r.get("clean_confirmed_flyovers", r.get("clean_plausible_flyovers", 0))
             seconds += r.get("duration_s", 0.0)
     if not n:
         return None
-    return {"files": n, "hours": seconds / 3600, "clean": clean, "plausible": plaus}
+    return {"files": n, "hours": seconds / 3600, "clean": clean, "confirmed": conf}
 
 
 def build(folder: Path, name: str, auditor: str = "", accumulate_dir: Path | None = None) -> str:
@@ -97,14 +109,17 @@ def build(folder: Path, name: str, auditor: str = "", accumulate_dir: Path | Non
     peak = max((r["max_leak"] for r in reports), default=0.0)
     hit_windows = sum(1 for r in reports for w in r["windows"] if w["groups"])
     confirmed = sum(1 for r in reports for w in r["windows"] for g in w["groups"] if _plausible(g))
-    # Exposure accumulates. Count the clean, plausible flyovers across every
-    # stretch we listened to, turn that into a rate, and project it over the
-    # whole archive; fold in full-coverage counts when we have them.
-    n_clean = sum(1 for r in reports for w in r["windows"] for g in w["groups"] if _plausible(g) and _clean(g))
+    # Exposure accumulates. Count the clean flyovers (the attacker's own
+    # acceptance bar, physically possible) across every stretch we listened
+    # to, turn that into a rate, and project it over the whole archive; fold in
+    # full-coverage counts when we have them. "Confirmed" is the subset with
+    # harmonics or a very tight fit: higher confidence, not a gate.
+    n_clean = sum(1 for r in reports for w in r["windows"] for g in w["groups"] if _clean(g))
+    n_conf = sum(1 for r in reports for w in r["windows"] for g in w["groups"] if _clean(g) and _plausible(g))
     rate_h = n_clean / listened_h if listened_h else 0.0
     projected = rate_h * total_h
     full = _load_full_coverage(accumulate_dir)
-    accumulated = full["plausible"] if full else n_clean
+    accumulated = full["clean"] if full else n_clean
 
     # The verdict must track PLAUSIBLE detections, not the raw leak score: a
     # single physically-impossible fit (e.g. airliner speed at rooftop height)
@@ -123,16 +138,17 @@ def build(folder: Path, name: str, auditor: str = "", accumulate_dir: Path | Non
         verdict = "Enough clean flyovers to locate you have accumulated across your archive."
         if full:
             explain = (f"Listening to every second of {full['files']} stream(s) ({full['hours']:.1f} h) found "
-                       f"{full['clean']} clean flyovers, {full['plausible']} of them physically confirmed. Three at "
-                       f"different angles is enough to triangulate, and an attacker uses the whole archive, not one "
-                       f"stream. No single stretch needs to score high for this; most of yours don't. Scrubbing the "
-                       f"flagged VODs and changing the setup are both worth doing.")
+                       f"{full['clean']} flyovers clean enough for an attacker to use, {full['confirmed']} of them "
+                       f"confirmed by harmonics or a very tight fit. Three at different angles is enough to "
+                       f"triangulate, and an attacker uses the whole archive, not one stream. No single stretch needs "
+                       f"to score high for this; most of yours don't. Scrubbing the flagged VODs and changing the "
+                       f"setup are both worth doing.")
         else:
-            explain = (f"In the {listened_h:.1f} h we listened to, {n_clean} clean, physically plausible flyovers "
-                       f"accumulated — about {rate_h:.1f} per hour of footage, so roughly {projected:.0f} across your "
-                       f"{total_h:.0f} h archive. Three at different angles is enough to triangulate, and an attacker "
-                       f"uses the whole archive, not one stream. Scrubbing the flagged VODs and changing the setup "
-                       f"are both worth doing.")
+            explain = (f"In the {listened_h:.1f} h we listened to, {n_clean} flyovers clean enough for an attacker to "
+                       f"use accumulated ({n_conf} confirmed by harmonics or a very tight fit) — about {rate_h:.1f} per "
+                       f"hour of footage, so roughly {projected:.0f} across your {total_h:.0f} h archive. Three at "
+                       f"different angles is enough to triangulate, and an attacker uses the whole archive, not one "
+                       f"stream. Scrubbing the flagged VODs and changing the setup are both worth doing.")
     elif peak_plausible < GREEN:
         verdict = "No usable location leak found in this sample."
         explain = (f"Nothing in the {n_win} stretches we listened to had the signature an attacker "
@@ -170,7 +186,7 @@ def build(folder: Path, name: str, auditor: str = "", accumulate_dir: Path | Non
     for r in reports:
         for w in r["windows"]:
             for g in w["groups"]:
-                tag = "plausible" if _plausible(g) else "unlikely"
+                tag = "confirmed" if _plausible(g) else ("possible" if _possible(g) else "impossible")
                 appendix.append(
                     f"<tr><td class='date'>{_date_from(r['file'])}</td><td class='mono'>{_hms(w['start_s'])}</td>"
                     f"<td class='num'>{g['v_mps']:.0f} m/s</td><td class='num'>{g['miss_m']:.0f} m</td>"
@@ -218,8 +234,8 @@ details{{margin-top:12px}} summary{{cursor:pointer;color:var(--muted)}}
   <span>listened to <b>{listened_h:.1f} h</b> (about 1 minute in every {round(1/frac) if frac else '∞'})</span>
   <span>peak stretch score <b>{peak:.2f}</b> / 1.00 (raw; <b>{peak_plausible:.2f}</b> after discarding impossible fits)</span>
   <span>{hit_windows} stretches with any candidate, <b>{confirmed}</b> plausible</span>
-  <span><b>{n_clean}</b> clean flyovers in the sample — about <b>{rate_h:.1f}</b> per hour, so roughly <b>{projected:.0f}</b> across the archive</span>
-  {f'<span>full coverage of {full["files"]} stream(s), {full["hours"]:.1f} h: <b>{full["clean"]}</b> clean flyovers, <b>{full["plausible"]}</b> confirmed</span>' if full else ''}
+  <span><b>{n_clean}</b> clean flyovers in the sample ({n_conf} confirmed) — about <b>{rate_h:.1f}</b> per hour, so roughly <b>{projected:.0f}</b> across the archive</span>
+  {f'<span>full coverage of {full["files"]} stream(s), {full["hours"]:.1f} h: <b>{full["clean"]}</b> clean flyovers, <b>{full["confirmed"]}</b> confirmed</span>' if full else ''}
 </div>
 
 <h2>Per stream</h2>
@@ -248,7 +264,7 @@ details{{margin-top:12px}} summary{{cursor:pointer;color:var(--muted)}}
 <tr><th>date</th><th>at</th><th class="num">speed</th><th class="num">miss distance</th><th class="num">harmonics</th><th class="num">fit error</th><th>reading</th></tr>
 {appendix_html}
 </table></div>
-<p class="muted" style="font-size:13px">A real airliner flies 70–250 m/s; anything above ~180 m/s within a few hundred metres is physically silly and means the fitter matched something else. Two or more harmonics, or a fit error under 0.2%, is what a genuine flyover looks like.</p>
+<p class="muted" style="font-size:13px">Aircraft fly 40–300 m/s; anything above ~180 m/s within a few hundred metres is physically silly and means the fitter matched something else ("impossible"). Two or more harmonics, or a fit error under 0.2%, is a flyover beyond doubt ("confirmed"); a single clean line at 0.3–1.5% ("possible") is still one an attacker can use, and most real light-aircraft passes look like that.</p>
 </details>
 
 <p class="muted" style="font-size:13px;margin-top:40px">Generated with <a href="https://nocontrail.audio" style="color:inherit">No Contrail</a>, open source, runs locally. Nothing from your audio was uploaded anywhere.</p>

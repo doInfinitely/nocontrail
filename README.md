@@ -162,9 +162,8 @@ detector as it was before the linking fix): 52 clean flyovers in total, yet no
 single hour scored above 0.41. Someone watching per-clip scores would have read
 "moderate" 22 times and never seen the aggregate.
 
-So the number the tools lead with is the **count of clean flyovers** — at least
-40 s long with at least 15 Hz of drop, long and deep enough to carry usable
-geometry — and whether it has reached the three that trilateration needs:
+So the number the tools lead with is the **count of clean flyovers** and
+whether it has reached the three that trilateration needs:
 
 ```bash
 python -m contrail.cli audit stream1.wav stream2.wav --json counts.json
@@ -173,21 +172,48 @@ python -m contrail.cli audit stream1.wav stream2.wav --json counts.json
 `audit` covers every second of each file, lists each clean flyover with a
 timestamp to listen at, and totals across the files. One implementation,
 `contrail/accumulate.py`, backs the CLI, the report (`contrail report
---accumulate counts/`) and the app. Two details keep the count honest:
+--accumulate counts/`) and the app.
 
-* **Tiles are 120 s and overlap by 45 s**, so any flyover up to ~70 s has a
-  view of at least 45 s in some tile. With 90 s tiles and 10 s overlap, one
-  75 s pass was cut into two partial views whose fits disagreed and came out
-  as three aircraft. Costs 1.6× the audio length in detector time.
+**"Clean" is the attacker's bar, not ours.** The thresholds come from the
+blind localisation pipeline that fixed a real recording site to 0.7 km: a tone
+enters its fit if it is at least 12 s long, falls by at least 3 % of its
+frequency, and fits the Doppler model to under 1.2 Hz rms. Our detector's own
+output gates (12 s, 3 Hz, 1.0 Hz rms) already sit there, so clean is close to
+detected. The bar this replaced — 40 s and 15 Hz, inherited from the scale the
+window score saturates at — kept 2 of 33 detections on a real 40-minute
+recording whose window score read 1.00; the attacker had used a 24 s tone from
+the same file. A fit no aircraft could have produced (over 300 m/s, or airliner
+speed within a few hundred metres) never counts. Flyovers confirmed by two or
+more harmonics or a very tight fit are reported as a higher-confidence subset,
+never used as a gate: real single-line light-aircraft passes fit at 0.3–1.5 %
+and the attacker needs neither.
+
+One guard the attacker's bar lacks: the counted line must stand **7 dB over the
+floor** (median whitened level). The detector's false positives are chains of
+just-over-prominence noise peaks that can meet duration, drop and fit on paper
+— one 16 s "line" at 146→120 Hz fitted to 1.0 Hz rms where the audio was floor
+at 1.8 dB — and they sit at 4–6 dB; real passes on the 40-minute recording ran
+7–17 dB, their faint high harmonics 4.5–7 dB. The attacker absorbs its own
+false positives statistically at the localisation stage; a count has to reject
+them up front. `--min-power-db` lowers it if a quiet site warrants.
+
+Two details keep the count honest:
+
+* **Tiles are 300 s and overlap by 90 s, at 8 kHz.** 120 s tiles truncated
+  44–59 s passes into views that fell under the bar, and shorter overlaps cut
+  one pass into partial views whose fits disagreed (a 75 s pass came out as
+  three aircraft under 90 s / 10 s). 8 kHz is plenty for a 50–800 Hz band: the
+  same 40 minutes of 48 kHz audio took 968 s against 1453 s at 120 s / 16 kHz.
 * **The same aircraft is recognised by its measured lines**, not its fitted
   parameters: over the audio two tiles share, their lines coincide to well
   under a hertz, and a line the grouper split off is caught as a harmonic of
-  one already counted.
+  one already counted. Three real passes stacked inside 95 s on that recording
+  (different slopes, speeds and miss distances) stay three.
 
 The per-window score is still printed, labelled as what it is: one window's
 score, which does not add up and is not a verdict on the file. The report's
-verdict goes red when the accumulated count of clean, physically plausible
-flyovers reaches three, however low each stretch scores on its own.
+verdict goes red when the accumulated count of clean flyovers reaches three,
+however low each stretch scores on its own.
 
 ## Roadmap
 
@@ -217,11 +243,15 @@ flyovers reaches three, however low each stretch scores on its own.
 3. **Real VAD** (silero) in place of the energy gate; also use it in the
    detector so peaks are only picked from speech-free frames.
 4. **Real audio** — the whole thing needs a bench of real recordings with
-   known flyovers before anyone trusts the numbers. First data point: on an 80 s
-   excerpt of a 40-minute real room recording, the detector after the linking
-   fix recovers the faint falling tone (141→116 Hz, 23 s, 87 points, fit rms
-   0.4 Hz) that an independent attack-side fitter had used and that the
-   detector before the fix missed entirely.
+   known flyovers before anyone trusts the numbers. First data points, from one
+   40-minute real room recording: the detector before the linking fix found 1
+   ridge; after it, 20 (an independent attack-side run) and 33 detections over
+   full coverage here, including the faint falling tone (141→116 Hz, 23 s, fit
+   rms 0.4 Hz) the attacker had used. Under the attacker's bar those 33 are 20
+   usable passes; with the 7 dB floor and harmonic de-duplication, **12
+   distinct passes in 40 minutes**, 18 per hour, every one standing 8–17 dB
+   over the floor — against a count of 2 under the old 40 s / 15 Hz bar.
+   Recall, not truth: none is ADS-B-verified yet.
 5. Optional ADS-B lookup of *your own declared position* to turn "a plane
    passed" into "this plane, at this time", for a stronger leak estimate.
 

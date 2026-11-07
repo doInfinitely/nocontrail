@@ -8,7 +8,7 @@ same without ffmpeg.
 Output is COUNTS ONLY. No per-flyover geometry, no timestamps, no location — by design, so the
 result can inform a risk decision without itself being a locating artifact.
 
-Usage: accumulate.py VIDEO [--tile-s 120] [--overlap-s 45] [--min-dur 40] [--min-drop 15]
+Usage: accumulate.py VIDEO [--tile-s 300] [--overlap-s 90] [--min-dur 12] [--min-drop-pct 3]
                       [--report PATH]
 """
 from __future__ import annotations
@@ -25,7 +25,7 @@ from scipy.io import wavfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from contrail.accumulate import ANALYSIS_SR, CleanConfig, Exposure, as_float  # noqa: E402
+from contrail.accumulate import CleanConfig, Exposure, as_float  # noqa: E402
 from contrail.detect import find_tracks, group_flyovers  # noqa: E402
 
 
@@ -56,7 +56,7 @@ def accumulate(path: str, cfg: CleanConfig) -> dict:
         with tempfile.TemporaryDirectory() as td:
             wav = str(Path(td) / "t.wav")
             try:
-                extract(path, float(start), cfg.tile_s, ANALYSIS_SR, wav)
+                extract(path, float(start), cfg.tile_s, cfg.analysis_sr, wav)
                 fs, y = wavfile.read(wav)
                 y = as_float(y)
                 if y.size < fs:  # < 1 s decoded (stream gap) — skip
@@ -74,20 +74,21 @@ def accumulate(path: str, cfg: CleanConfig) -> dict:
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("video")
-    ap.add_argument("--tile-s", type=float, default=120.0)
-    ap.add_argument("--overlap-s", type=float, default=45.0)
-    ap.add_argument("--min-dur", type=float, default=40.0, help="clean-flyover minimum duration (s)")
-    ap.add_argument("--min-drop", type=float, default=15.0, help="clean-flyover minimum pitch drop (Hz)")
+    ap.add_argument("--tile-s", type=float, default=300.0)
+    ap.add_argument("--overlap-s", type=float, default=90.0)
+    ap.add_argument("--min-dur", type=float, default=12.0, help="clean-flyover minimum duration (s)")
+    ap.add_argument("--min-drop-pct", type=float, default=3.0, help="clean-flyover minimum drop, %% of frequency")
     ap.add_argument("--report", default=None)
     a = ap.parse_args()
 
-    cfg = CleanConfig(min_dur_s=a.min_dur, min_drop_hz=a.min_drop, tile_s=a.tile_s, overlap_s=a.overlap_s)
+    cfg = CleanConfig(min_dur_s=a.min_dur, min_drop_frac=a.min_drop_pct / 100.0,
+                      tile_s=a.tile_s, overlap_s=a.overlap_s)
     rep = accumulate(a.video, cfg)
     print(f"{rep['file']}: {rep['duration_s']/3600:.1f} h, full coverage "
           f"({rep['tiles_processed']}/{rep['tiles']} tiles)")
     print(f"  flyover detections: {rep['flyover_detections']}")
-    print(f"  CLEAN flyovers (>={a.min_dur:.0f}s, >={a.min_drop:.0f}Hz): {rep['clean_flyovers']}")
-    print(f"  CLEAN + plausible (speed/height/confirmation): {rep['clean_plausible_flyovers']}")
+    print(f"  CLEAN flyovers (>={a.min_dur:.0f} s, >={a.min_drop_pct:.0f}% drop, possible fit): {rep['clean_flyovers']}")
+    print(f"  confirmed by harmonics or a tight fit: {rep['clean_confirmed_flyovers']}")
     print(f"  peak {a.tile_s:.0f}-s window score: {rep['peak_window_score']:.2f} (per window; does not add up)")
     print(f"  crosses 3-flyover trilateration bar: {rep['crosses_trilateration_bar']}")
     if a.report:

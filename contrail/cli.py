@@ -41,8 +41,9 @@ def _hms(s: float) -> str:
 
 
 def cmd_audit(args) -> int:
-    cfg = CleanConfig(min_dur_s=args.min_dur, min_drop_hz=args.min_drop,
-                      tile_s=args.tile_s, overlap_s=args.overlap_s)
+    cfg = CleanConfig(min_dur_s=args.min_dur, min_drop_frac=args.min_drop_pct / 100.0,
+                      min_power_db=args.min_power_db,
+                      tile_s=args.tile_s, overlap_s=args.overlap_s, analysis_sr=args.analysis_sr)
     summaries = []
     for path in args.inputs:
         sr, y = wavfile.read(path, mmap=True)     # tiles are converted one at a time
@@ -56,24 +57,27 @@ def cmd_audit(args) -> int:
         exp, windows = accumulate_array(y, int(sr), cfg, progress=progress)
         print(" " * 24, end="\r", file=sys.stderr)
         for s in sorted(exp.sightings, key=lambda s: s.tc_s):
-            tag = "plausible" if s.plausible else "unconfirmed"
-            print(f"  {_hms(s.tc_s)}  {s.group}  [{tag}]")
+            tag = "confirmed" if s.confirmed else "single line"
+            power = max(float(np.median(tr.power)) for tr in s.group.tracks)
+            print(f"  {_hms(s.tc_s)}  {s.group}  {power:.0f} dB over the floor  [{tag}]")
         s = exp.summary(name, duration)
         summaries.append(s)
         print(f"  flyover detections: {s['flyover_detections']}   "
-              f"CLEAN (>= {cfg.min_dur_s:.0f} s, >= {cfg.min_drop_hz:.0f} Hz drop): {s['clean_flyovers']}   "
-              f"plausible: {s['clean_plausible_flyovers']}")
+              f"CLEAN (>= {cfg.min_dur_s:.0f} s, >= {cfg.min_drop_frac:.0%} drop, fit <= {cfg.max_fit_rms_hz} Hz, "
+              f">= {cfg.min_power_db:.0f} dB over the floor, physically possible): {s['clean_flyovers']}   "
+              f"confirmed by harmonics or a tight fit: "
+              f"{s['clean_confirmed_flyovers']}")
         print(f"  peak {cfg.tile_s:.0f}-s window score: {s['peak_window_score']:.2f}  "
               f"(one window's score; it does not add up and is not a verdict on the file)")
         print()
 
     arch = combine(summaries)
     bar = "YES" if arch["crosses_trilateration_bar"] else "no"
-    bar_p = "YES" if arch["crosses_trilateration_bar_plausible"] else "no"
+    bar_c = "YES" if arch["crosses_trilateration_bar_confirmed"] else "no"
     print(f"ARCHIVE: {arch['files']} file(s), {arch['hours']:.2f} h, "
-          f"{arch['clean_flyovers']} clean flyover(s) ({arch['clean_plausible_flyovers']} plausible), "
+          f"{arch['clean_flyovers']} clean flyover(s) ({arch['clean_confirmed_flyovers']} confirmed), "
           f"about {arch['clean_per_hour']:.1f} per hour")
-    print(f"  crosses the 3-flyover trilateration bar: {bar} (plausible only: {bar_p})")
+    print(f"  crosses the 3-flyover trilateration bar: {bar} (confirmed only: {bar_c})")
     if args.json:
         Path(args.json).write_text(json.dumps({"files": summaries, "archive": arch}, indent=2))
         print(f"  wrote {args.json}")
@@ -99,11 +103,15 @@ def main(argv=None) -> int:
     sub = p.add_subparsers(dest="cmd", required=True)
     a = sub.add_parser("audit", help="count clean flyovers across whole recordings")
     a.add_argument("inputs", nargs="+", metavar="wav")
-    a.add_argument("--tile-s", type=float, default=120.0)
-    a.add_argument("--overlap-s", type=float, default=45.0,
+    a.add_argument("--tile-s", type=float, default=300.0)
+    a.add_argument("--overlap-s", type=float, default=90.0,
                    help="large on purpose: a flyover cut in two fits as two aircraft")
-    a.add_argument("--min-dur", type=float, default=40.0, help="clean-flyover minimum duration (s)")
-    a.add_argument("--min-drop", type=float, default=15.0, help="clean-flyover minimum pitch drop (Hz)")
+    a.add_argument("--min-dur", type=float, default=12.0, help="clean-flyover minimum duration (s); the attacker's bar")
+    a.add_argument("--min-drop-pct", type=float, default=3.0,
+                   help="clean-flyover minimum pitch drop, %% of the line's frequency; the attacker's bar")
+    a.add_argument("--min-power-db", type=float, default=7.0,
+                   help="counted lines must stand this far over the floor (median whitened level); rejects noise chains")
+    a.add_argument("--analysis-sr", type=int, default=8000, help="tiles are resampled to this rate")
     a.add_argument("--json", default=None, help="write per-file and archive counts here")
     a.set_defaults(fn=cmd_audit)
     s = sub.add_parser("scrub"); s.add_argument("input"); s.add_argument("output")

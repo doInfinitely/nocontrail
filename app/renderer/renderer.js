@@ -36,7 +36,7 @@ import sys
 if "/" not in sys.path: sys.path.insert(0, "/")
 import numpy as np, json
 from contrail.detect import find_tracks, group_flyovers, leak_score
-from contrail.accumulate import CleanConfig, Exposure, is_clean, is_plausible
+from contrail.accumulate import CleanConfig, Exposure, is_clean, is_confirmed
 
 # One Exposure per audited file: the count of clean flyovers across the
 # sampled windows is what tracks exposure; the per-window score does not add up.
@@ -55,7 +55,7 @@ def audit_window(path, sr, start_s):
         lines=len(tr), flyovers=len(g), leak=round(w["score"], 4), new_clean=w["new_clean"],
         groups=[dict(harmonics=x.harmonics, v=round(x.fit.v, 1), miss=round(x.fit.d, 0),
                      tc=round(x.fit.tc, 1), rms=round(x.fit.rms / x.fit.f0, 4),
-                     clean=bool(is_clean(x, _exp.cfg)), plausible=bool(is_plausible(x))) for x in g],
+                     clean=bool(is_clean(x, _exp.cfg)), confirmed=bool(is_confirmed(x))) for x in g],
     ))
 
 def finish_audit(duration_s):
@@ -156,9 +156,9 @@ async function runScrub(y) {
 // Exposure accumulates: three clean flyovers at different angles, anywhere in
 // what a person has published, is enough to triangulate. The per-window score
 // describes one stretch and never adds up, so the verdict is led by the count.
-function verdict(maxLeak, clean, plausible, pct) {
+function verdict(maxLeak, clean, confirmed, pct) {
   if (clean >= 3) return { cls: "bad", head: "Enough clean flyovers to locate you are already in the sampled audio.",
-    body: `${clean} clean flyovers (${plausible} physically confirmed) in the ${pct}% of this file we listened to. Three at different angles is enough to triangulate, and they add up across everything you publish. Scrub before sharing.` };
+    body: `${clean} flyovers clean enough for an attacker to use (${confirmed} confirmed by harmonics or a very tight fit) in the ${pct}% of this file we listened to. Three at different angles is enough to triangulate, and they add up across everything you publish. Scrub before sharing.` };
   if (maxLeak >= 0.5) return { cls: "bad", head: "This recording likely leaks your location.",
     body: "A flyover strong and clean enough on its own to match against flight data. Scrub before sharing." };
   if (clean >= 1 || maxLeak >= 0.2) return { cls: "warn", head: "Aircraft flyovers found. They add up.",
@@ -172,13 +172,13 @@ function showResults(name, durationS, windows, summary) {
   const maxLeak = scored.reduce((m, w) => Math.max(m, w.leak), 0);
   const planes = scored.reduce((m, w) => Math.max(m, w.flyovers), 0);
   const clean = summary ? summary.clean_flyovers : 0;
-  const plausible = summary ? summary.clean_plausible_flyovers : 0;
+  const confirmed = summary ? summary.clean_confirmed_flyovers : 0;
   const sampledS = Math.min(durationS, scored.length * WINDOW_S);
   const pct = Math.round(100 * sampledS / Math.max(durationS, 1));
   const perHour = sampledS > 0 ? clean / (sampledS / 3600) : 0;
-  const v = verdict(maxLeak, clean, plausible, pct);
+  const v = verdict(maxLeak, clean, confirmed, pct);
   const rows = scored.filter((w) => w.flyovers > 0).map((w) => {
-    const g = w.groups.map((x) => `v=${x.v} m/s, miss ${x.miss} m (${x.clean ? "clean" : "shallow"}${x.plausible ? ", plausible" : ""})`).join("; ");
+    const g = w.groups.map((x) => `v=${x.v} m/s, miss ${x.miss} m (${x.clean ? "clean" : "not usable"}${x.confirmed ? ", confirmed" : ""})`).join("; ");
     return `<tr><td class="num">${(w.startS / 60).toFixed(1)} min</td><td class="num">${w.leak.toFixed(2)}</td><td>${w.flyovers}</td><td>${g}</td></tr>`;
   }).join("");
   const r = el("results");
@@ -186,7 +186,7 @@ function showResults(name, durationS, windows, summary) {
     <div class="verdict ${v.cls}">
       <h2>${v.head}</h2>
       <p>${v.body}</p>
-      <p class="score">${name} · ${(durationS / 60).toFixed(1)} min · ${scored.length} window(s) sampled (${pct}% of the file) · <b>${clean} clean flyover(s)</b>, ${plausible} confirmed · peak window score ${maxLeak.toFixed(2)} / 1.00</p>
+      <p class="score">${name} · ${(durationS / 60).toFixed(1)} min · ${scored.length} window(s) sampled (${pct}% of the file) · <b>${clean} clean flyover(s)</b>, ${confirmed} confirmed · peak window score ${maxLeak.toFixed(2)} / 1.00</p>
     </div>
     ${clean > 0 && pct < 100
       ? `<p class="muted" style="margin-top:12px">At this rate every hour you publish adds about <b>${perHour.toFixed(1)}</b> clean flyovers. The window score describes one stretch and does not add up; the count does.</p>`

@@ -33,47 +33,90 @@ ANALYSIS_SR = 16_000   # the detector's band ends at 800 Hz; anything above this
 class CleanConfig:
     """What counts as a flyover an attacker can use, and how a recording is tiled.
 
-    Tiles overlap by 45 s so that any flyover up to ~70 s long has a view of at
-    least 45 s in some tile; shorter overlaps cut long flyovers into two partial
-    views whose fits disagree (measured: one 75 s pass came out as three
-    aircraft under 90 s tiles with 10 s overlap). Costs 1.6x the audio length
-    in detector time."""
-    min_dur_s: float = 40.0        # the scale leak_score saturates at: a full approach->recede
-    min_drop_hz: float = 15.0      # total pitch drop; shallow lines carry little geometry
-    tile_s: float = 120.0
-    overlap_s: float = 45.0
+    The bar is the attacker's own acceptance bar, taken from the blind
+    localisation pipeline that fixed a real recording site to 0.7 km: a tone
+    enters its fit if it is at least 12 s long, falls by at least 3 % of its
+    frequency, and fits the Doppler model to under 1.2 Hz rms. Our detector's
+    output gates (12 s, 3 Hz, 1.0 Hz rms) sit at that bar already, so "clean"
+    is close to "detected". The earlier 40 s / 15 Hz bar, inherited from
+    leak_score's saturation scale, discarded most of what the attack consumes:
+    on a real 40-minute recording it kept 2 of 33 detections while the window
+    score read 1.00. A physically impossible fit never counts.
+
+    Tiles are 300 s with 90 s overlap at 8 kHz. 120 s tiles truncated 44-59 s
+    passes into views that fell under the bar, and 8 kHz is plenty for a
+    50-800 Hz band: 40 min of 48 kHz audio took 968 s against 1453 s at
+    120 s / 16 kHz, and found 7 passes against 2."""
+    min_dur_s: float = 12.0
+    min_drop_frac: float = 0.03        # f_start / f_end >= 1.03 on the line's own frequency
+    max_fit_rms_hz: float = 1.2
+    # Median whitened level of the counted line. Not part of the attacker's bar,
+    # which it meets on paper: a chain of just-over-prominence noise peaks can
+    # pass duration, drop and fit (measured: a 16 s "line" at 146->120 Hz, fit
+    # rms 1.0 Hz, where the audio is floor at 1.8 dB median). A line a fitter
+    # can trace stands out of the floor; real passes on a 40-minute recording
+    # ran 7-17 dB, their faint high harmonics 4.5-7 dB.
+    min_power_db: float = 7.0
+    tile_s: float = 300.0
+    overlap_s: float = 90.0
+    analysis_sr: int = 8000
+
+
+def physically_possible(v_mps: float, miss_m: float) -> bool:
+    """Could an aircraft have produced this fit? Speed floor matches the
+    detector's v_range (a light aircraft on approach flies 35-45 m/s); an
+    airliner speed within a few hundred metres is a fitter matching something
+    else."""
+    return 40 <= v_mps <= 300 and not (v_mps > 180 and miss_m < 600)
+
+
+def confirmed_params(n_harmonics: int, rms_frac: float) -> bool:
+    """Higher-confidence tier: two or more harmonics, or a very tight fit.
+    Shown as a subset, never used as a gate: the attacker needs neither (its
+    fit bar is 1.2 Hz, ~0.8 % at 150 Hz, with no harmonic requirement), and
+    real single-line passes sit at 0.3-1.5 %."""
+    return n_harmonics >= 2 or rms_frac < 0.002
 
 
 def plausible_params(v_mps: float, miss_m: float, n_harmonics: int, rms_frac: float) -> bool:
-    """A real flyover: plausible speed and either harmonic confirmation or a
-    tight fit. The one rule the report, the CLI and the app share. The speed
-    floor matches the detector's v_range: a light aircraft on approach flies
-    35-45 m/s, and those passes are real (a 45 m/s Cessna pass with three
-    harmonics was being marked implausible at the old 50 m/s floor)."""
-    speed_ok = 40 <= v_mps <= 300
-    not_absurd = not (v_mps > 180 and miss_m < 600)   # airliner speed at rooftop height
-    confirmed = n_harmonics >= 2 or rms_frac < 0.002
-    return speed_ok and not_absurd and confirmed
+    """Physically possible AND confirmed (the report's appendix tag)."""
+    return physically_possible(v_mps, miss_m) and confirmed_params(n_harmonics, rms_frac)
+
+
+def is_possible(g: FlyoverGroup) -> bool:
+    return physically_possible(g.fit.v, g.fit.d)
+
+
+def is_confirmed(g: FlyoverGroup) -> bool:
+    return confirmed_params(len(g.harmonics), g.fit.rms / g.fit.f0)
 
 
 def is_plausible(g: FlyoverGroup) -> bool:
-    return plausible_params(g.fit.v, g.fit.d, len(g.harmonics), g.fit.rms / g.fit.f0)
+    return is_possible(g) and is_confirmed(g)
 
 
 def is_clean(g: FlyoverGroup, cfg: CleanConfig | None = None) -> bool:
+    """Usable by the attacker: the acceptance bar above, on the group's most
+    complete line, plus a physically possible fit."""
     cfg = cfg or CleanConfig()
-    return g.duration >= cfg.min_dur_s and g.drop_hz >= cfg.min_drop_hz
+    ratio = max(tr.f_start / tr.f_end for tr in g.tracks)
+    power = max(float(np.median(tr.power)) for tr in g.tracks)
+    return (g.duration >= cfg.min_dur_s
+            and ratio >= 1.0 + cfg.min_drop_frac
+            and g.fit.rms <= cfg.max_fit_rms_hz
+            and power >= cfg.min_power_db
+            and is_possible(g))
 
 
-def to_analysis_rate(y: np.ndarray, sr: int) -> tuple[np.ndarray, int]:
-    """Mono float at <= ANALYSIS_SR. Never upsamples (8 kHz is fine as it is)."""
+def to_analysis_rate(y: np.ndarray, sr: int, target: int = ANALYSIS_SR) -> tuple[np.ndarray, int]:
+    """Mono float at <= target. Never upsamples (8 kHz is fine as it is)."""
     y = np.asarray(y, dtype=np.float64)
     if y.ndim == 2:
         y = y.mean(axis=1)
-    if sr <= ANALYSIS_SR:
+    if sr <= target:
         return y, sr
-    r = Fraction(ANALYSIS_SR, sr)
-    return resample_poly(y, r.numerator, r.denominator), ANALYSIS_SR
+    r = Fraction(target, sr)
+    return resample_poly(y, r.numerator, r.denominator), target
 
 
 def as_float(y: np.ndarray) -> np.ndarray:
@@ -106,12 +149,17 @@ def tile_bounds(n_samples: int, sr: int, cfg: CleanConfig | None = None) -> list
 Lines = list[tuple[np.ndarray, np.ndarray]]   # per tracked line: (global time s, Hz)
 
 
+_RATIOS = tuple(float(h) for h in range(1, 7)) + tuple(1.0 / h for h in range(2, 7))
+
+
 def same_aircraft(a: Lines, b: Lines, tol_hz: float = 3.0, min_common_s: float = 3.0) -> bool:
     """Do two sets of measured lines belong to one aircraft? Yes if any pair
-    agrees over at least `min_common_s` of common time at a small harmonic
-    ratio. Measured frequencies are compared, not fitted parameters: two
-    partial views of one pass fit different (f0, v, d), but over the audio
-    both tiles share their lines coincide to well under a hertz."""
+    agrees over at least `min_common_s` of common time at a harmonic ratio up
+    to 6 (a propeller's ladder reaches that far: 85/160/.../590 Hz on a real
+    recording, and a lone 5th harmonic must not count as a second plane).
+    Measured frequencies are compared, not fitted parameters: two partial views
+    of one pass fit different (f0, v, d), but over the audio both tiles share
+    their lines coincide to well under a hertz."""
     for ta, fa in a:
         for tb, fb in b:
             lo, hi = max(ta[0], tb[0]), min(ta[-1], tb[-1])
@@ -119,7 +167,7 @@ def same_aircraft(a: Lines, b: Lines, tol_hz: float = 3.0, min_common_s: float =
                 continue
             tt = np.linspace(lo, hi, 25)
             fa_i, fb_i = np.interp(tt, ta, fa), np.interp(tt, tb, fb)
-            for r in (1.0, 2.0, 3.0, 0.5, 1.0 / 3.0):
+            for r in _RATIOS:
                 if float(np.median(np.abs(fa_i - r * fb_i))) < tol_hz * max(r, 1.0):
                     return True
     return False
@@ -138,8 +186,10 @@ class Sighting:
         return self.start_s + self.group.fit.tc
 
     @property
-    def plausible(self) -> bool:
-        return is_plausible(self.group)
+    def confirmed(self) -> bool:
+        return is_confirmed(self.group)
+
+    plausible = confirmed   # older name
 
 
 @dataclass
@@ -179,8 +229,10 @@ class Exposure:
         return len(self.sightings)
 
     @property
-    def clean_plausible(self) -> int:
-        return sum(s.plausible for s in self.sightings)
+    def clean_confirmed(self) -> int:
+        return sum(s.confirmed for s in self.sightings)
+
+    clean_plausible = clean_confirmed   # older name
 
     @property
     def crosses_bar(self) -> bool:
@@ -188,8 +240,8 @@ class Exposure:
         return self.clean >= 3
 
     @property
-    def crosses_bar_plausible(self) -> bool:
-        return self.clean_plausible >= 3
+    def crosses_bar_confirmed(self) -> bool:
+        return self.clean_confirmed >= 3
 
     def summary(self, file: str = "", duration_s: float = 0.0) -> dict:
         return {
@@ -199,13 +251,15 @@ class Exposure:
             "windows": self.windows,
             "flyover_detections": self.detections,
             "clean_flyovers": self.clean,
-            "clean_plausible_flyovers": self.clean_plausible,
+            "clean_confirmed_flyovers": self.clean_confirmed,
+            "clean_plausible_flyovers": self.clean_confirmed,   # older name
             "min_dur_s": self.cfg.min_dur_s,
-            "min_drop_hz": self.cfg.min_drop_hz,
+            "min_drop_frac": self.cfg.min_drop_frac,
+            "max_fit_rms_hz": self.cfg.max_fit_rms_hz,
             # per-window; does not add up across windows and is not an archive verdict
             "peak_window_score": round(self.peak_window_score, 3),
             "crosses_trilateration_bar": self.crosses_bar,
-            "crosses_trilateration_bar_plausible": self.crosses_bar_plausible,
+            "crosses_trilateration_bar_confirmed": self.crosses_bar_confirmed,
         }
 
 
@@ -224,7 +278,7 @@ def accumulate_array(y: np.ndarray, sr: int, cfg: CleanConfig | None = None,
     for i, (start_s, a, b) in enumerate(bounds):
         if progress:
             progress(i, len(bounds))
-        seg, sr_a = to_analysis_rate(as_float(y[a:b]), sr)
+        seg, sr_a = to_analysis_rate(as_float(y[a:b]), sr, cfg.analysis_sr)
         tracks = find_tracks(seg, sr_a, dc)
         windows.append(exp.add_window(group_flyovers(tracks), tracks, start_s))
     return exp, windows
@@ -233,16 +287,16 @@ def accumulate_array(y: np.ndarray, sr: int, cfg: CleanConfig | None = None,
 def combine(summaries: list[dict]) -> dict:
     """Archive totals over per-file summaries."""
     clean = sum(s["clean_flyovers"] for s in summaries)
-    plaus = sum(s["clean_plausible_flyovers"] for s in summaries)
+    conf = sum(s.get("clean_confirmed_flyovers", s.get("clean_plausible_flyovers", 0)) for s in summaries)
     hours = sum(s["duration_s"] for s in summaries) / 3600
     return {
         "files": len(summaries),
         "hours": round(hours, 2),
         "flyover_detections": sum(s["flyover_detections"] for s in summaries),
         "clean_flyovers": clean,
-        "clean_plausible_flyovers": plaus,
+        "clean_confirmed_flyovers": conf,
         "clean_per_hour": round(clean / hours, 2) if hours else 0.0,
         "peak_window_score": max((s["peak_window_score"] for s in summaries), default=0.0),
         "crosses_trilateration_bar": clean >= 3,
-        "crosses_trilateration_bar_plausible": plaus >= 3,
+        "crosses_trilateration_bar_confirmed": conf >= 3,
     }
