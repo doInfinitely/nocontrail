@@ -6,6 +6,28 @@ what's inside, and the footer must stay intact on every send.
 
 ---
 
+## From — sending identity
+
+Sent from the two cold-sending domains (NOT `nocontrail.audio`, which stays
+clean for real mail): **axiomatictrue.com** and **joyfulquantum.com**, ~5
+Instantly mailboxes each. The domain is neutral, so the *identity* has to be
+explicit — put the brand in the display name, the real company in the footer:
+
+```
+From: Remy — No Contrail <remy@axiomatictrue.com>
+Reply-To: remy@axiomatictrue.com      # (or the joyfulquantum.com address)
+```
+
+This is CAN-SPAM-clean: a domain you genuinely own and send from is not
+falsified routing, and the display name + body + footer leave no doubt who is
+writing. What would be deceptive is hiding the sender — so never drop the
+"I run No Contrail" line or the footer.
+
+**Reply/opt-out handling:** replies land in Instantly's unibox. Watch it daily
+and process every "unsubscribe"/"stop"/"remove" into `add_suppression.py` the
+same day. The footer links `https://nocontrail.audio` for credibility even
+though the sending domain differs.
+
 ## Subject
 
 ```
@@ -19,10 +41,11 @@ Honest, specific, no clickbait. It says exactly what the email is about.
 ```
 Hi {{handle}},
 
-I run No Contrail. We check recordings for a location leak most streamers
-don't know about: aircraft passing overhead leave a Doppler "whoosh" in your
-audio, and with a few of those a listener can triangulate roughly where you
-record from — even if you never show your location on camera.
+I'm a big Twitch fan — I'm AxiomOfInfinity over there — and I run No Contrail.
+We check recordings for a location leak most streamers don't know about:
+aircraft passing overhead leave a Doppler "whoosh" in your audio, and with a
+few of those a listener can triangulate roughly where you record from — even if
+you never show your location on camera.
 
 I found your inquiry address on your channel and wanted to flag it, since
 public VODs are exactly where this shows up.
@@ -63,10 +86,17 @@ list for good — or use the one-click link in this email's headers.
 Modern bulk-sender rules (Gmail/Yahoo) effectively require these. Set them in
 your sending tool / script:
 
+Use an address on the SENDING domain (the one the mail is actually from), so
+the unsubscribe aligns with the sender:
+
 ```
-List-Unsubscribe: <mailto:unsubscribe@nocontrail.audio?subject=unsubscribe>, <https://nocontrail.audio/u/{{token}}>
+List-Unsubscribe: <mailto:unsubscribe@axiomatictrue.com?subject=unsubscribe>, <https://axiomatictrue.com/u/{{token}}>
 List-Unsubscribe-Post: List-Unsubscribe=One-Click
 ```
+
+(swap the domain to joyfulquantum.com for mailboxes sending from that domain —
+match the header to the From domain.) Instantly can manage these for you; if it
+does, make sure its unsubscribe handling writes back to your suppression.
 
 - The `mailto:` works even without the hosted endpoint — mail lands in a box you
   watch, and you suppress from it daily.

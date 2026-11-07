@@ -68,7 +68,24 @@ not legal advice.
   replies, invoices). Send the cold campaign from a dedicated cold-email
   platform on a separate sending subdomain.
 
-## Sending + warmup setup
+## Sending infrastructure (current)
+
+- **Platform:** Instantly, **10 prewarmed mailboxes** across two cold-sending
+  domains — **axiomatictrue.com** and **joyfulquantum.com** (~5 each). Neither
+  is `nocontrail.audio`, which stays clean for real mail.
+- **Warmup:** handled (accounts came prewarmed), but leave Instantly's warmup
+  toggled ON continuously so the accounts keep earning engagement while they
+  also send cold.
+- **Volume:** start ~20–30/day per inbox, ramp toward 40–50; ~300/day ceiling
+  across the 10. Add all 10 to the campaign so Instantly rotates automatically.
+- **Identity:** domains are brand-neutral, so the From display name carries the
+  brand — `Remy — No Contrail <remy@axiomatictrue.com>` — and the footer names
+  Remy Ochei Inc. See `template.md` "From — sending identity".
+- **List hygiene first:** verify `sendable.csv` (Instantly's verifier or
+  NeverBounce/ZeroBounce) before the first send; pipe bounces into
+  `add_suppression.py --stdin --reason bounced`. Bounces burn paid accounts fast.
+
+## Generic warmup notes
 
 What to sign up for (both include built-in mailbox warmup, inbox rotation, and
 per-inbox send throttling — the things Mailgun won't do for cold outreach):
