@@ -36,16 +36,30 @@ import sys
 if "/" not in sys.path: sys.path.insert(0, "/")
 import numpy as np, json
 from contrail.detect import find_tracks, group_flyovers, leak_score
+from contrail.accumulate import CleanConfig, Exposure, is_clean, is_plausible
 
-def audit_window(path, sr):
+# One Exposure per audited file: the count of clean flyovers across the
+# sampled windows is what tracks exposure; the per-window score does not add up.
+_exp = None
+
+def start_audit():
+    global _exp
+    _exp = Exposure(CleanConfig())
+
+def audit_window(path, sr, start_s):
     y = np.fromfile(path, dtype="float32")
     tr = find_tracks(y, sr)
     g = group_flyovers(tr)
+    w = _exp.add_window(g, tr, float(start_s))
     return json.dumps(dict(
-        lines=len(tr), flyovers=len(g), leak=round(leak_score(tr), 4),
+        lines=len(tr), flyovers=len(g), leak=round(w["score"], 4), new_clean=w["new_clean"],
         groups=[dict(harmonics=x.harmonics, v=round(x.fit.v, 1), miss=round(x.fit.d, 0),
-                     tc=round(x.fit.tc, 1), rms=round(x.fit.rms / x.fit.f0, 4)) for x in g],
+                     tc=round(x.fit.tc, 1), rms=round(x.fit.rms / x.fit.f0, 4),
+                     clean=bool(is_clean(x, _exp.cfg)), plausible=bool(is_plausible(x))) for x in g],
     ))
+
+def finish_audit(duration_s):
+    return json.dumps(_exp.summary("", float(duration_s)))
 
 from contrail.scrub import scrub, ScrubConfig
 
@@ -93,17 +107,20 @@ function pickWindows(y) {
   return out;
 }
 
-async function runEngineOnWindow(data) {
+async function runEngineOnWindow(data, startS) {
   // subarray shares the decoded buffer; copy the exact window bytes to the FS.
   const copy = new Float32Array(data); // contiguous
   py.FS.writeFile("/win.f32", new Uint8Array(copy.buffer));
   const audit = py.globals.get("audit_window");
   try {
-    return JSON.parse(audit("/win.f32", SR));
+    return JSON.parse(audit("/win.f32", SR, startS));
   } finally {
     audit.destroy();
   }
 }
+
+function startAudit() { py.runPython("start_audit()"); }
+function finishAudit(durationS) { return JSON.parse(py.runPython(`finish_audit(${durationS})`)); }
 
 function encodeWav(float32, sr) {
   const n = float32.length;
@@ -136,22 +153,32 @@ async function runScrub(y) {
   return { report, wav: encodeWav(scrubbed, SR) };
 }
 
-function verdict(maxLeak, planes) {
+// Exposure accumulates: three clean flyovers at different angles, anywhere in
+// what a person has published, is enough to triangulate. The per-window score
+// describes one stretch and never adds up, so the verdict is led by the count.
+function verdict(maxLeak, clean, plausible, pct) {
+  if (clean >= 3) return { cls: "bad", head: "Enough clean flyovers to locate you are already in the sampled audio.",
+    body: `${clean} clean flyovers (${plausible} physically confirmed) in the ${pct}% of this file we listened to. Three at different angles is enough to triangulate, and they add up across everything you publish. Scrub before sharing.` };
   if (maxLeak >= 0.5) return { cls: "bad", head: "This recording likely leaks your location.",
-    body: "Aircraft Doppler lines strong and clean enough to match against flight data. Scrub before sharing." };
-  if (maxLeak >= 0.2 || planes >= 1) return { cls: "warn", head: "Weak aircraft signature found.",
-    body: "Some flyover lines are present but not strong enough on their own to place the recording. Worth scrubbing to be safe." };
-  return { cls: "good", head: "No usable location leak found.",
-    body: "No aircraft-Doppler lines strong enough to localize this recording were detected in the sampled audio." };
+    body: "A flyover strong and clean enough on its own to match against flight data. Scrub before sharing." };
+  if (clean >= 1 || maxLeak >= 0.2) return { cls: "warn", head: "Aircraft flyovers found. They add up.",
+    body: `${clean} clean flyover(s) in the sampled stretches. One recording rarely locates you by itself; an archive of them does. Worth scrubbing.` };
+  return { cls: "good", head: "No usable location leak found in the sampled audio.",
+    body: "No aircraft-Doppler lines clean enough to carry geometry were detected in the stretches sampled." };
 }
 
-function showResults(name, durationS, windows) {
+function showResults(name, durationS, windows, summary) {
   const scored = windows.filter((w) => "leak" in w);
   const maxLeak = scored.reduce((m, w) => Math.max(m, w.leak), 0);
   const planes = scored.reduce((m, w) => Math.max(m, w.flyovers), 0);
-  const v = verdict(maxLeak, planes);
+  const clean = summary ? summary.clean_flyovers : 0;
+  const plausible = summary ? summary.clean_plausible_flyovers : 0;
+  const sampledS = Math.min(durationS, scored.length * WINDOW_S);
+  const pct = Math.round(100 * sampledS / Math.max(durationS, 1));
+  const perHour = sampledS > 0 ? clean / (sampledS / 3600) : 0;
+  const v = verdict(maxLeak, clean, plausible, pct);
   const rows = scored.filter((w) => w.flyovers > 0).map((w) => {
-    const g = w.groups.map((x) => `v=${x.v} m/s, miss ${x.miss} m`).join("; ");
+    const g = w.groups.map((x) => `v=${x.v} m/s, miss ${x.miss} m (${x.clean ? "clean" : "shallow"}${x.plausible ? ", plausible" : ""})`).join("; ");
     return `<tr><td class="num">${(w.startS / 60).toFixed(1)} min</td><td class="num">${w.leak.toFixed(2)}</td><td>${w.flyovers}</td><td>${g}</td></tr>`;
   }).join("");
   const r = el("results");
@@ -159,14 +186,17 @@ function showResults(name, durationS, windows) {
     <div class="verdict ${v.cls}">
       <h2>${v.head}</h2>
       <p>${v.body}</p>
-      <p class="score">${name} · ${(durationS / 60).toFixed(1)} min · ${scored.length} window(s) sampled · peak leak ${maxLeak.toFixed(2)} / 1.00</p>
+      <p class="score">${name} · ${(durationS / 60).toFixed(1)} min · ${scored.length} window(s) sampled (${pct}% of the file) · <b>${clean} clean flyover(s)</b>, ${plausible} confirmed · peak window score ${maxLeak.toFixed(2)} / 1.00</p>
     </div>
-    ${rows ? `<table><thead><tr><th>at</th><th>leak</th><th>flyovers</th><th>per flyover (relative to mic)</th></tr></thead><tbody>${rows}</tbody></table>`
+    ${clean > 0 && pct < 100
+      ? `<p class="muted" style="margin-top:12px">At this rate every hour you publish adds about <b>${perHour.toFixed(1)}</b> clean flyovers. The window score describes one stretch and does not add up; the count does.</p>`
+      : ``}
+    ${rows ? `<table><thead><tr><th>at</th><th>window score</th><th>flyovers</th><th>per flyover (relative to mic)</th></tr></thead><tbody>${rows}</tbody></table>`
            : `<p class="muted" style="margin-top:16px">No flyover candidates in any sampled window.</p>`}
-    <p class="muted" style="margin-top:14px;font-size:13px">Validated on synthetic audio only. Treat as indicative. Parameters are relative to the microphone — speed and miss distance, not a position on Earth.</p>
-    ${maxLeak > 0 || planes > 0
+    <p class="muted" style="margin-top:14px;font-size:13px">Validated on synthetic audio and a first real recording. Treat as indicative. Parameters are relative to the microphone — speed and miss distance, not a position on Earth.</p>
+    ${clean > 0 || maxLeak > 0 || planes > 0
       ? `<div class="scrub"><button type="button" id="scrub">Scrub &amp; save a clean copy</button>
-         <span id="scrub-note" class="muted">Removes the aircraft lines and mixes in decoy flyovers. Output is 16 kHz mono.</span></div>`
+         <span id="scrub-note" class="muted">Erases the aircraft lines (filled with room-level noise, two passes). Output is 16 kHz mono.</span></div>`
       : ``}
     <div id="scrub-result"></div>
     <div class="again"><button type="button" id="again">Audit another</button></div>`;
@@ -191,9 +221,9 @@ async function doScrub() {
     const savedLine = res.saved ? `Saved to <code>${res.path}</code>.` : "Not saved.";
     out.innerHTML = `<div class="verdict good" style="margin-top:16px">
       <h2>Scrubbed.</h2>
-      <p>Notched the ${report.before.lines} detected aircraft line(s) and mixed in ${report.decoys} decoy flyover(s) at the same level.
+      <p>Erased the ${report.before.lines} detected aircraft line(s)${report.decoys ? ` and mixed in ${report.decoys} decoy flyover(s) at the same level` : ""}.
          Voice activity was ${Math.round(report.speech * 100)}% of frames. ${savedLine}</p>
-      <p class="score">A detector now sees ${report.after.lines} line(s), most of them decoys a fitter can't tell from a real plane. Removal is capped by what the detector finds — audit the saved file and listen before you rely on it.</p>
+      <p class="score">A detector now sees ${report.after.lines} line(s). Removal is capped by what the detector finds — audit the saved file and listen before you rely on it.</p>
     </div>`;
     if (note) note.textContent = "";
   } catch (e) {
@@ -231,18 +261,21 @@ async function handleBuffer(arrayBuffer, name) {
     lastClip = { y, durationS, name };
     const windows = pickWindows(y);
     const results = [];
+    startAudit();
     for (let i = 0; i < windows.length; i++) {
       setStatus(`Analysing window ${i + 1} of ${windows.length}…`);
       setBar(0.1 + 0.85 * (i / windows.length));
       // let the UI paint before the blocking engine call
       await new Promise((r) => setTimeout(r, 15));
-      const out = await runEngineOnWindow(windows[i].data);
-      out.startS = windows[i].start / SR;
+      const startS = windows[i].start / SR;
+      const out = await runEngineOnWindow(windows[i].data, startS);
+      out.startS = startS;
       results.push(out);
     }
+    const summary = finishAudit(durationS);
     setBar(1);
     prog.hidden = true;
-    showResults(name, durationS, results);
+    showResults(name, durationS, results, summary);
   } catch (e) {
     prog.hidden = true;
     const r = el("results");
@@ -282,25 +315,29 @@ async function selftest(path) {
     const { y, durationS } = await decodeMono16k(buf);
     const windows = pickWindows(y);
     const results = [];
+    startAudit();
     for (const w of windows) {
-      const out = await runEngineOnWindow(w.data);
-      out.startS = w.start / SR;
+      const startS = w.start / SR;
+      const out = await runEngineOnWindow(w.data, startS);
+      out.startS = startS;
       results.push(out);
     }
+    const summary = finishAudit(durationS);
     const maxLeak = results.reduce((m, w) => Math.max(m, w.leak || 0), 0);
     const planes = results.reduce((m, w) => Math.max(m, w.flyovers || 0), 0);
+    const clean = summary.clean_flyovers;
     el("progress").hidden = true;
     drop.hidden = true;
     el("intro").hidden = true;
-    showResults(API.basename(path), durationS, results);
+    showResults(API.basename(path), durationS, results, summary);
     if (API.selftestScrub) {
       const { report, wav } = await runScrub(y);
       if (API.scrubOutPath) await API.selftestWrite(API.scrubOutPath, wav);
       console.log("SELFTEST_SCRUB " + JSON.stringify(report));
     }
-    console.log("SELFTEST_RESULT " + JSON.stringify({ maxLeak, planes, windows: results.length, durationS: Math.round(durationS) }));
+    console.log("SELFTEST_RESULT " + JSON.stringify({ maxLeak, planes, clean, windows: results.length, durationS: Math.round(durationS) }));
     await new Promise((r) => setTimeout(r, 120));
-    await API.selftestDone({ ok: true, maxLeak, planes });
+    await API.selftestDone({ ok: true, maxLeak, planes, clean });
   } catch (e) {
     console.log("SELFTEST_ERROR " + (e.message || e));
     await API.selftestDone({ ok: false, error: String(e.message || e) });

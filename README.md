@@ -45,7 +45,8 @@ contrail/synth.py     synthetic test-clip generator (fake speech + planted plane
 contrail/detect.py    STFT → whitening → sub-bin peak tracking → fragment merge
                       → physical fit → split-and-refit for crossing lines
 contrail/scrub.py     gate / notch / decoy tiers, verified by re-detection
-contrail/cli.py       `contrail audit <wav>`, `contrail scrub <in> <out>`
+contrail/accumulate.py clean-flyover count across a whole recording and an archive
+contrail/cli.py       `contrail audit <wav>...`, `contrail scrub <in> <out>`, `contrail report`
 scripts/validate.py   plants flyovers, scores recovery, renders the spectrogram
 scripts/scrub_bench.py before/after per scrub tier
 scripts/group_bench.py scores line-to-plane grouping against planted truth
@@ -151,6 +152,42 @@ for t in tracks:
     print(t)
 print("leak score:", leak_score(tracks))
 ```
+
+## Exposure accumulates
+
+The per-window score never adds up across time, and trilateration does: three
+or more clean flyovers at different geometries, anywhere in what a person has
+published, constrain a position. Measured on a real 21-hour recording (with the
+detector as it was before the linking fix): 52 clean flyovers in total, yet no
+single hour scored above 0.41. Someone watching per-clip scores would have read
+"moderate" 22 times and never seen the aggregate.
+
+So the number the tools lead with is the **count of clean flyovers** — at least
+40 s long with at least 15 Hz of drop, long and deep enough to carry usable
+geometry — and whether it has reached the three that trilateration needs:
+
+```bash
+python -m contrail.cli audit stream1.wav stream2.wav --json counts.json
+```
+
+`audit` covers every second of each file, lists each clean flyover with a
+timestamp to listen at, and totals across the files. One implementation,
+`contrail/accumulate.py`, backs the CLI, the report (`contrail report
+--accumulate counts/`) and the app. Two details keep the count honest:
+
+* **Tiles are 120 s and overlap by 45 s**, so any flyover up to ~70 s has a
+  view of at least 45 s in some tile. With 90 s tiles and 10 s overlap, one
+  75 s pass was cut into two partial views whose fits disagreed and came out
+  as three aircraft. Costs 1.6× the audio length in detector time.
+* **The same aircraft is recognised by its measured lines**, not its fitted
+  parameters: over the audio two tiles share, their lines coincide to well
+  under a hertz, and a line the grouper split off is caught as a harmonic of
+  one already counted.
+
+The per-window score is still printed, labelled as what it is: one window's
+score, which does not add up and is not a verdict on the file. The report's
+verdict goes red when the accumulated count of clean, physically plausible
+flyovers reaches three, however low each stretch scores on its own.
 
 ## Roadmap
 

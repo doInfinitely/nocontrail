@@ -571,8 +571,14 @@ def group_flyovers(tracks: list[Track], cfg: GroupConfig | None = None) -> list[
 
 
 def leak_score(tracks: list[Track]) -> float:
-    """0-1. Three or more clean, long flyovers is enough to trilaterate. Counts
-    aircraft rather than lines, since a plane's harmonics add no new geometry."""
+    """0-1 for ONE window of audio: three or more clean, long flyovers in it is
+    enough to trilaterate. Counts aircraft rather than lines, since a plane's
+    harmonics add no new geometry.
+
+    This is a per-window score. It saturates within the window and never adds
+    up across windows, while exposure does: an archive with one clean flyover
+    per hour scores low everywhere and still hands an attacker dozens of
+    flyovers. Use contrail.accumulate for the count that tracks that."""
     groups = group_flyovers(tracks)
     if not groups:
         return 0.0

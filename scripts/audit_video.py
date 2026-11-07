@@ -81,7 +81,9 @@ def audit(path: str, n_windows: int, window_s: float, sr: int, seed: int) -> dic
                 "groups": [
                     {"harmonics": g.harmonics, "v_mps": round(g.fit.v, 1),
                      "miss_m": round(g.fit.d, 0), "tc_s": round(g.fit.tc, 1),
-                     "rms_frac": round(g.fit.rms / g.fit.f0, 4)}
+                     "rms_frac": round(g.fit.rms / g.fit.f0, 4),
+                     # so the report can tell a clean (usable) flyover from a shallow one
+                     "dur_s": round(g.duration, 1), "drop_hz": round(g.drop_hz, 1)}
                     for g in groups
                 ],
             })

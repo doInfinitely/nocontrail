@@ -40,15 +40,42 @@ def _title_from(name: str) -> str:
 
 
 def _plausible(g: dict) -> bool:
-    """A real flyover: plausible speed and either harmonics or a tight fit."""
-    v, d = g["v_mps"], g["miss_m"]
-    speed_ok = 50 <= v <= 300
-    not_absurd = not (v > 180 and d < 600)      # airliner speed at rooftop height
-    confirmed = len(g.get("harmonics", [])) >= 2 or g.get("rms_frac", 1) < 0.002
-    return speed_ok and not_absurd and confirmed
+    """A real flyover: plausible speed and either harmonics or a tight fit.
+    One rule, shared with the CLI and the app (contrail.accumulate)."""
+    from .accumulate import plausible_params
+    return plausible_params(g["v_mps"], g["miss_m"], len(g.get("harmonics", [])), g.get("rms_frac", 1))
 
 
-def build(folder: Path, name: str, auditor: str = "") -> str:
+def _clean(g: dict, min_dur: float = 40.0, min_drop: float = 15.0) -> bool:
+    """Long and deep enough to carry usable geometry. Older audit JSON has no
+    duration/drop per group; those count as clean if plausible."""
+    return g.get("dur_s", min_dur) >= min_dur and g.get("drop_hz", min_drop) >= min_drop
+
+
+def _load_full_coverage(folder: Path | None) -> dict | None:
+    """Totals from full-coverage JSON (contrail audit --json, or accumulate.py)."""
+    if not folder:
+        return None
+    clean = plaus = 0
+    seconds = 0.0
+    n = 0
+    for p in sorted(Path(folder).glob("*.json")):
+        with open(p) as f:
+            rep = json.load(f)
+        files = rep.get("files", [rep])          # `contrail audit --json` wraps per-file summaries
+        for r in files:
+            if "clean_flyovers" not in r:
+                continue
+            n += 1
+            clean += r["clean_flyovers"]
+            plaus += r.get("clean_plausible_flyovers", 0)
+            seconds += r.get("duration_s", 0.0)
+    if not n:
+        return None
+    return {"files": n, "hours": seconds / 3600, "clean": clean, "plausible": plaus}
+
+
+def build(folder: Path, name: str, auditor: str = "", accumulate_dir: Path | None = None) -> str:
     reports = []
     for p in sorted(folder.glob("*.json")):
         with open(p) as f:
@@ -70,6 +97,14 @@ def build(folder: Path, name: str, auditor: str = "") -> str:
     peak = max((r["max_leak"] for r in reports), default=0.0)
     hit_windows = sum(1 for r in reports for w in r["windows"] if w["groups"])
     confirmed = sum(1 for r in reports for w in r["windows"] for g in w["groups"] if _plausible(g))
+    # Exposure accumulates. Count the clean, plausible flyovers across every
+    # stretch we listened to, turn that into a rate, and project it over the
+    # whole archive; fold in full-coverage counts when we have them.
+    n_clean = sum(1 for r in reports for w in r["windows"] for g in w["groups"] if _plausible(g) and _clean(g))
+    rate_h = n_clean / listened_h if listened_h else 0.0
+    projected = rate_h * total_h
+    full = _load_full_coverage(accumulate_dir)
+    accumulated = full["plausible"] if full else n_clean
 
     # The verdict must track PLAUSIBLE detections, not the raw leak score: a
     # single physically-impossible fit (e.g. airliner speed at rooftop height)
@@ -80,7 +115,25 @@ def build(folder: Path, name: str, auditor: str = "") -> str:
         default=0.0,
     )
     verdict_word, verdict_fg, verdict_bg = _band(peak_plausible)
-    if peak_plausible < GREEN:
+    if accumulated >= 3:
+        # Three clean flyovers at different geometries is what trilateration
+        # needs, and they accumulate across an archive however low each
+        # stretch scores on its own. This outranks the per-stretch band.
+        verdict_word, verdict_fg, verdict_bg = _band(RED)
+        verdict = "Enough clean flyovers to locate you have accumulated across your archive."
+        if full:
+            explain = (f"Listening to every second of {full['files']} stream(s) ({full['hours']:.1f} h) found "
+                       f"{full['clean']} clean flyovers, {full['plausible']} of them physically confirmed. Three at "
+                       f"different angles is enough to triangulate, and an attacker uses the whole archive, not one "
+                       f"stream. No single stretch needs to score high for this; most of yours don't. Scrubbing the "
+                       f"flagged VODs and changing the setup are both worth doing.")
+        else:
+            explain = (f"In the {listened_h:.1f} h we listened to, {n_clean} clean, physically plausible flyovers "
+                       f"accumulated — about {rate_h:.1f} per hour of footage, so roughly {projected:.0f} across your "
+                       f"{total_h:.0f} h archive. Three at different angles is enough to triangulate, and an attacker "
+                       f"uses the whole archive, not one stream. Scrubbing the flagged VODs and changing the setup "
+                       f"are both worth doing.")
+    elif peak_plausible < GREEN:
         verdict = "No usable location leak found in this sample."
         explain = (f"Nothing in the {n_win} stretches we listened to had the signature an attacker "
                    f"would need. The few candidates were single lines with no harmonic confirmation, "
@@ -163,8 +216,10 @@ details{{margin-top:12px}} summary{{cursor:pointer;color:var(--muted)}}
 <div class="facts">
   <span><b>{len(reports)}</b> streams, <b>{total_h:.0f} h</b> total</span>
   <span>listened to <b>{listened_h:.1f} h</b> (about 1 minute in every {round(1/frac) if frac else '∞'})</span>
-  <span>peak score <b>{peak:.2f}</b> / 1.00 (raw; <b>{peak_plausible:.2f}</b> after discarding impossible fits)</span>
+  <span>peak stretch score <b>{peak:.2f}</b> / 1.00 (raw; <b>{peak_plausible:.2f}</b> after discarding impossible fits)</span>
   <span>{hit_windows} stretches with any candidate, <b>{confirmed}</b> plausible</span>
+  <span><b>{n_clean}</b> clean flyovers in the sample — about <b>{rate_h:.1f}</b> per hour, so roughly <b>{projected:.0f}</b> across the archive</span>
+  {f'<span>full coverage of {full["files"]} stream(s), {full["hours"]:.1f} h: <b>{full["clean"]}</b> clean flyovers, <b>{full["plausible"]}</b> confirmed</span>' if full else ''}
 </div>
 
 <h2>Per stream</h2>
@@ -172,7 +227,7 @@ details{{margin-top:12px}} summary{{cursor:pointer;color:var(--muted)}}
 <tr><th>date</th><th>stream</th><th class="num">length</th><th>status</th><th class="num">score</th><th class="num">flagged</th><th>listen at</th></tr>
 {''.join(rows)}
 </table></div>
-<p class="muted" style="font-size:13px">Score: 0 is silence, 1 is a textbook flyover. Below 0.25 is noise. Around 0.5 is where matching to flight data starts to work. "Flagged" is how many of the sampled stretches showed anything; "listen at" is the worst one, if you want to hear it yourself.</p>
+<p class="muted" style="font-size:13px">Score is for one {win_s:.0f}-second stretch: 0 is silence, 1 is a textbook flyover. Below 0.25 is noise. Around 0.5 is where matching to flight data starts to work. It does not add up across stretches; the count of clean flyovers does, and that count is what locates a person. "Flagged" is how many of the sampled stretches showed anything; "listen at" is the worst one, if you want to hear it yourself.</p>
 
 <h2>What this means for you</h2>
 <ul>
@@ -208,8 +263,10 @@ def main(argv=None) -> int:
     ap.add_argument("--name", required=True, help="who the report is for")
     ap.add_argument("--by", default="", help="auditor name")
     ap.add_argument("-o", "--output", default="audit.html")
+    ap.add_argument("--accumulate", default=None,
+                    help="folder of full-coverage JSON (contrail audit --json / accumulate.py) to fold in")
     a = ap.parse_args(argv)
-    out = build(Path(a.folder), a.name, a.by)
+    out = build(Path(a.folder), a.name, a.by, Path(a.accumulate) if a.accumulate else None)
     Path(a.output).write_text(out)
     print(f"wrote {a.output}")
     return 0

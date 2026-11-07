@@ -92,14 +92,16 @@ def render(cfg: SynthConfig) -> tuple[np.ndarray, list[Flyover]]:
 def render_entering(sr: int = 8000, duration_s: float = 100.0, onset_s: float = 25.0,
                     offset_s: float = 85.0, aircraft_level: float = 0.05,
                     noise_level: float = 0.01, harmonics: int = 3, seed: int = 3,
-                    flyover: Flyover | None = None) -> tuple[np.ndarray, Flyover]:
+                    flyover: Flyover | None = None,
+                    extra: list[tuple[Flyover, float, float]] | None = None) -> tuple[np.ndarray, Flyover]:
     """A quiet room (pink-ish floor, no speech) and one propeller aircraft that
     comes into earshot mid-clip: its lines switch on at `onset_s`, when the
     detector is already tracking the floor's noise peaks, and off at
     `offset_s`. Default aircraft: Cessna-like blade-pass line at 76 Hz, 48 m/s,
     450 m up, 350 m lateral miss. This is the case that defeated the detector
     (see DetectConfig.link_power_db) and the stream-audio case that matters:
-    the streamer is quiet and a plane goes over."""
+    the streamer is quiet and a plane goes over. `extra` adds more aircraft as
+    (flyover, onset_s, offset_s)."""
     rng = np.random.default_rng(seed)
     n = int(sr * duration_s)
     t = np.arange(n) / sr
@@ -109,15 +111,16 @@ def render_entering(sr: int = 8000, duration_s: float = 100.0, onset_s: float = 
     noise = noise_level * noise / noise.std()
     fo = flyover or Flyover(f0_hz=76.0, speed_mps=48.0, altitude_m=450.0, offset_m=350.0,
                             t_closest=0.5 * (onset_s + offset_s))
-    f_obs = fo.observed_frequency(t)
-    amp = fo.relative_amplitude(t)
-    gate = ((t >= onset_s) & (t <= offset_s)).astype(float)
-    k = int(0.5 * sr)
-    gate = np.convolve(gate, np.ones(k) / k, mode="same")
     y = noise.copy()
-    for h in range(1, harmonics + 1):
-        phase = 2 * np.pi * np.cumsum(h * f_obs) / sr
-        y += aircraft_level * amp * gate * (1.0 / h) * np.sin(phase)
+    k = int(0.5 * sr)
+    for plane, on, off in [(fo, onset_s, offset_s), *(extra or [])]:
+        f_obs = plane.observed_frequency(t)
+        amp = plane.relative_amplitude(t)
+        gate = ((t >= on) & (t <= off)).astype(float)
+        gate = np.convolve(gate, np.ones(k) / k, mode="same")
+        for h in range(1, harmonics + 1):
+            phase = 2 * np.pi * np.cumsum(h * f_obs) / sr
+            y += aircraft_level * amp * gate * (1.0 / h) * np.sin(phase)
     return np.clip(y, -1, 1).astype(np.float32), fo
 
 
