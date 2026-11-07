@@ -4,10 +4,12 @@ Pipeline:
   1. Low band STFT (long window → fine frequency resolution, coarse time).
   2. Per-frame spectral whitening so loud speech bands don't dominate.
   3. Peak picking per frame.
-  4. Greedy ridge tracking: link peaks across frames when the frequency
-     moves less than `max_hz_per_s`.
-  5. Keep tracks long enough and smooth enough to be a flyover, and whose
-     frequency is monotonic non-increasing (approach → recede) after smoothing.
+  4. Greedy ridge tracking, loudest track first: link peaks across frames when
+     the frequency moves less than `max_hz_per_s`, and never let a track take
+     a peak far above its own level (see DetectConfig.link_power_db).
+  5. Keep tracks long enough and smooth enough to be a flyover, whose
+     frequency is monotonic non-increasing (approach → recede) after smoothing
+     and not mostly constant (a hum is not a plane).
 """
 from __future__ import annotations
 
@@ -131,6 +133,27 @@ class DetectConfig:
     peak_prominence_db: float = 6.0
     max_hz_per_s: float = 12.0    # max drift between frames to link (steep S-curve middle)
     link_tol_hz: float = 2.5      # tolerance around the slope-predicted frequency
+    # A track will not take a peak more than this many dB ABOVE its own running
+    # (whitened) level; such a peak starts its own track. The whitened floor is
+    # a forest of ~100 6-dB-prominent noise peaks per frame, and without this a
+    # one-frame-old noise track whose extrapolation lands within link_tol_hz
+    # steals the peak of a 30 dB line that enters mid-clip (an aircraft coming
+    # into earshot); the line then shreds into noise-contaminated fragments and
+    # is lost, however loud it is. Noise tracks sit under ~10 dB and a line
+    # entering earshot at the levels that leak is 30+ dB, so 20 dB separates
+    # them. One-sided and this wide on purpose: a line's own peak jumps 15-25 dB
+    # when a speech harmonic sits on it or the speech floor moves, so a track
+    # must stay free to take a weaker or a moderately stronger peak (at 15 dB
+    # the 2nd/3rd harmonics of a planted flyover under speech are lost).
+    link_power_db: float = 20.0
+    # A track with more than this fraction of its points within 1 Hz of its
+    # median frequency is a steady tone (mains hum, a fan), not a flyover. A
+    # hum glued to a transient prefix passes min_drop_hz and the Doppler model
+    # fits "drop, then flat" with a small residual; measured on a 60 Hz hum.
+    max_constant_frac: float = 0.8
+    # Leading/trailing points this far below a track's median level are
+    # dropped before fitting (a noise prefix picked up at onset wrecks the fit).
+    trim_power_db: float = 15.0
     max_gap_frames: int = 4       # frames a track may go missing (speech harmonic crossings)
     min_fragment_s: float = 3.0   # shortest piece worth trying to merge
     max_merge_gap_s: float = 8.0  # fragments further apart than this are not joined
@@ -243,51 +266,13 @@ def find_tracks(y: np.ndarray, sr: int, cfg: DetectConfig | None = None) -> list
             pk.append((float(f[i] + delta * df), float(col[i])))
         frame_peaks.append(pk)
 
-    # greedy tracking
-    active: list[dict] = []
-    done: list[dict] = []
-    max_step = cfg.max_hz_per_s * cfg.hop_s
-
-    def predict(tr: dict, t_now: float) -> float:
-        """Extrapolate the last ~2 s of the track linearly (Doppler drift is smooth)."""
-        tt, ff = np.array(tr["t"][-8:]), np.array(tr["f"][-8:])
-        if len(tt) < 3:
-            return ff[-1]
-        slope = float(np.clip(_slope(tt, ff), -cfg.max_hz_per_s, 0.0))  # lines never rise
-        return ff[-1] + slope * (t_now - tt[-1])
-
-    for j, peaks in enumerate(frame_peaks):
-        used = set()
-        for tr in active:
-            best, best_d = None, None
-            f_pred = predict(tr, t[j])
-            tol = cfg.link_tol_hz * (1 + 0.5 * tr["gap"])
-            for k, (fp, pw) in enumerate(peaks):
-                if k in used:
-                    continue
-                d = abs(fp - f_pred)
-                if d <= tol and fp <= tr["f"][-1] + cfg.link_tol_hz and (best_d is None or d < best_d):
-                    best, best_d = k, d
-            if best is None:
-                tr["gap"] += 1
-            else:
-                used.add(best)
-                fp, pw = peaks[best]
-                tr["t"].append(t[j]); tr["f"].append(fp); tr["p"].append(pw); tr["gap"] = 0
-        still = []
-        for tr in active:
-            (done if tr["gap"] > cfg.max_gap_frames else still).append(tr)
-        active = still
-        for k, (fp, pw) in enumerate(peaks):
-            if k not in used:
-                active.append({"t": [t[j]], "f": [fp], "p": [pw], "gap": 0})
-    done.extend(active)
+    done = _link_peaks(frame_peaks, t, cfg)
 
     # --- fragments: anything plausibly monotone and at least a few seconds long
     frags: list[Track] = []
     for tr in done:
-        tt, ff, pp = (np.array(tr[k]) for k in ("t", "f", "p"))
-        if tt[-1] - tt[0] < cfg.min_fragment_s:
+        tt, ff, pp = _trim_ends(*(np.array(tr[k]) for k in ("t", "f", "p")), cfg)
+        if len(tt) < 2 or tt[-1] - tt[0] < cfg.min_fragment_s:
             continue
         if np.max(np.diff(ff)) > cfg.link_tol_hz:   # Doppler lines never rise
             continue
@@ -306,6 +291,8 @@ def find_tracks(y: np.ndarray, sr: int, cfg: DetectConfig | None = None) -> list
             continue
         if ff[0] - ff[-1] < cfg.min_drop_hz:
             continue
+        if np.mean(np.abs(ff - np.median(ff)) < 1.0) > cfg.max_constant_frac:
+            continue   # steady tone with a transient stuck to one end
         expected_frames = (tt[-1] - tt[0]) / cfg.hop_s + 1
         if len(tt) / expected_frames < cfg.min_occupancy:
             continue
@@ -348,6 +335,75 @@ def _split(tr: Track, cfg: DetectConfig, n_candidates: int = 9) -> list[Track]:
         Track(tr.times[:k], tr.freqs[:k], tr.power[:k], a),
         Track(tr.times[k:], tr.freqs[k:], tr.power[k:], b),
     ]
+
+
+def _link_peaks(frame_peaks: list[list[tuple[float, float]]], t: np.ndarray, cfg: DetectConfig) -> list[dict]:
+    """Greedy frame-to-frame linking of (frequency, whitened dB) peaks into raw
+    tracks, strongest first. Tracks are served in descending running power, so
+    an established loud line claims its peak before any of the many weak noise
+    tracks whose extrapolation happens to land nearby, and no track may take a
+    peak far above its own level (a new line starts its own track instead of
+    being swallowed by a noise track); see DetectConfig.link_power_db."""
+    active: list[dict] = []
+    done: list[dict] = []
+
+    def predict(tr: dict, t_now: float) -> float:
+        """Extrapolate the last ~2 s of the track linearly (Doppler drift is smooth)."""
+        tt, ff = np.array(tr["t"][-8:]), np.array(tr["f"][-8:])
+        if len(tt) < 3:
+            return ff[-1]
+        slope = float(np.clip(_slope(tt, ff), -cfg.max_hz_per_s, 0.0))  # lines never rise
+        return ff[-1] + slope * (t_now - tt[-1])
+
+    for j, peaks in enumerate(frame_peaks):
+        fps = np.array([p[0] for p in peaks], dtype=float)
+        pws = np.array([p[1] for p in peaks], dtype=float)
+        used = np.zeros(len(peaks), dtype=bool)
+        # "pw" is the running mean of the last ~2 s of whitened level, updated on append
+        for tr in sorted(active, key=lambda x: x["pw"], reverse=True):
+            if len(peaks) == 0:
+                tr["gap"] += 1
+                continue
+            f_pred = predict(tr, t[j])
+            tol = cfg.link_tol_hz * (1 + 0.5 * tr["gap"])
+            dist = np.abs(fps - f_pred)
+            ok = (
+                ~used
+                & (dist <= tol)
+                & (fps <= tr["f"][-1] + cfg.link_tol_hz)
+                & (pws - tr["pw"] <= cfg.link_power_db)
+            )
+            if not ok.any():
+                tr["gap"] += 1
+                continue
+            k = int(np.argmin(np.where(ok, dist, np.inf)))
+            used[k] = True
+            tr["t"].append(t[j]); tr["f"].append(float(fps[k])); tr["p"].append(float(pws[k])); tr["gap"] = 0
+            tr["pw"] = float(np.mean(tr["p"][-8:]))
+        still = []
+        for tr in active:
+            (done if tr["gap"] > cfg.max_gap_frames else still).append(tr)
+        active = still
+        for k in np.flatnonzero(~used):
+            active.append({"t": [t[j]], "f": [float(fps[k])], "p": [float(pws[k])], "pw": float(pws[k]), "gap": 0})
+    done.extend(active)
+    return done
+
+
+def _trim_ends(tt: np.ndarray, ff: np.ndarray, pp: np.ndarray, cfg: DetectConfig):
+    """Drop leading/trailing points far below the track's median level. A noise
+    track that grabbed a line as it came into earshot carries a weak prefix
+    that would wreck the physical fit; a line's own faint fade-in/out is kept
+    unless it is `trim_power_db` under the body of the track."""
+    if len(pp) < 3:
+        return tt, ff, pp
+    floor = float(np.median(pp)) - cfg.trim_power_db
+    a, b = 0, len(pp)
+    while a < b and pp[a] < floor:
+        a += 1
+    while b > a and pp[b - 1] < floor:
+        b -= 1
+    return tt[a:b], ff[a:b], pp[a:b]
 
 
 def _slope(tt: np.ndarray, ff: np.ndarray) -> float:

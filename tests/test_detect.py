@@ -53,6 +53,33 @@ def test_recovers_most_planted_flyovers():
     assert hits / total >= 0.8
 
 
+def _on_line(tracks, fo, sr, n):
+    t = np.arange(n) / sr
+    ft = fo.observed_frequency(t)
+    out = []
+    for tr in tracks:
+        fi = np.interp(tr.times, t, ft)
+        if any(np.mean(np.abs(tr.freqs - h * fi) < 3 * h) > 0.8 for h in (1, 2, 3)):
+            out.append(tr)
+    return out
+
+
+def test_line_entering_earshot_over_noise_floor_is_tracked():
+    """A 30 dB line that switches on mid-clip used to come back as nothing at
+    every level: the noise tracks already active stole its peaks and shredded
+    it (the linker was first-come and blind to power). Both ends of the level
+    sweep from that report must now give the harmonics as long tracks."""
+    from contrail.synth import render_entering
+
+    for level in (0.01, 0.15):
+        y, fo = render_entering(aircraft_level=level)
+        tracks = find_tracks(y, 8000, DetectConfig())
+        hits = _on_line(tracks, fo, 8000, len(y))
+        assert len(hits) >= 2, (level, tracks)
+        assert max(tr.duration for tr in hits) >= 40.0, (level, hits)
+        assert all(tr.fit.rms < 1.0 for tr in hits)
+
+
 def test_vad_gating_is_safe_and_optional():
     from contrail.detect import DetectConfig, find_tracks, voice_activity
     from contrail.synth import SynthConfig, render

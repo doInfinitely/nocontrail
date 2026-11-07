@@ -54,12 +54,13 @@ scripts/group_bench.py scores line-to-plane grouping against planted truth
 ## Scrubbing
 
 Three tiers, all in the same STFT domain the detector uses, so what the
-scrubber touches is what a detector sees. Default is all three.
+scrubber touches is what a detector sees. Default is gate + notch; decoy is
+opt-in.
 
 | tier | what it does | synthetic bench (9 planted lines, 3 clips) |
 |---|---|---|
-| `gate` | in frames with no voice activity, attenuate < 500 Hz by 40 dB | 9/9 lines survive |
-| `notch` | for each detected ridge and its harmonics, zero a ±2.5 Hz band that follows the ridge frame by frame | 1/9 survive |
+| `gate` | in frames with no voice activity, attenuate < 500 Hz by 40 dB. Scales line and floor together, so a ridge's SNR is unchanged and a fitter sees it exactly as before | 9/9 lines survive |
+| `notch` | for each detected aircraft, replace bands that follow its fundamental and every harmonic up to 800 Hz, frame by frame, with floor-level noise; then re-detect and erase again | 1/9 survive |
 | `decoy` | mix in 8 synthetic flyovers with random plausible parameters, at the measured level of the real lines | 7/9 survive, 13/24 decoys detected |
 | all | | 1/9 survive, 16/24 decoys detected |
 
@@ -71,6 +72,17 @@ What that table says:
 * **Notch does the work** — but only on lines the detector found. The 1/9
   survivor was never detected, so was never notched. Scrub quality is capped
   by detector recall. That's the argument for keeping the two in one repo.
+  The second pass exists for the same reason: once the loud lines are gone,
+  the fragments and masked lines the first detection missed stand alone and
+  track cleanly, so they get erased too.
+* **Fill, don't zero.** A zeroed band leaves a hole whose edges are the most
+  prominent "peaks" in the frame, and the hole follows the Doppler curve, so it
+  is as trackable as the line was (measured: a hard ±4 Hz notch left a ridge
+  4 Hz off the original that the detector fitted as a clean flyover). The band
+  is filled with noise at the level of its surroundings instead, with phases
+  taken from one time-domain noise signal so the fill survives overlap-add
+  resynthesis at the level it was given (independent per-frame phases cancel
+  and leave a 5-10 dB trough that traces the same curve).
 * **Decoys don't remove anything**; they make a fitter's job ambiguous. On
   their own, a fitter still gets the real lines. Together with notch, what's
   left is mostly fake.
@@ -92,6 +104,17 @@ notches are a few Hz wide and well below the formants. Listen anyway.
   loud voice bands don't swamp a line 24 dB below them.
 * **Slope-predictive linking**, downward only. A receding plane never goes
   up in pitch, so the tracker is allowed to assume that.
+* **Strongest-first, power-aware linking.** The whitened floor is a forest of
+  ~100 six-dB-prominent noise peaks per frame. Served in creation order and
+  blind to level, the linker let a one-frame-old noise track steal the peak of
+  a 30 dB line the moment it entered earshot, and the line shredded into
+  fragments — the detector returned nothing for a plane going over a quiet
+  room, at any level, while finding the same plane fine if it was audible from
+  frame 0. Tracks are now served loudest first and may not take a peak more
+  than 20 dB above their own level (one-sided: a line's own peak jumps 15-25 dB
+  when a speech harmonic sits on it, and a track must stay free to follow it).
+  A track whose frequency is mostly constant is dropped as a steady tone: a
+  60 Hz hum glued to a transient prefix otherwise fits "drop, then flat".
 * **Physical fit as the gate.** Every candidate is fitted to the retarded-time
   flyover model (`f0`, ground speed, slant miss distance, time of closest
   approach). Anything that doesn't fit a plane to < 1 Hz RMS is dropped. This
@@ -157,7 +180,11 @@ print("leak score:", leak_score(tracks))
 3. **Real VAD** (silero) in place of the energy gate; also use it in the
    detector so peaks are only picked from speech-free frames.
 4. **Real audio** — the whole thing needs a bench of real recordings with
-   known flyovers before anyone trusts the numbers.
+   known flyovers before anyone trusts the numbers. First data point: on an 80 s
+   excerpt of a 40-minute real room recording, the detector after the linking
+   fix recovers the faint falling tone (141→116 Hz, 23 s, 87 points, fit rms
+   0.4 Hz) that an independent attack-side fitter had used and that the
+   detector before the fix missed entirely.
 5. Optional ADS-B lookup of *your own declared position* to turn "a plane
    passed" into "this plane, at this time", for a stronger leak estimate.
 

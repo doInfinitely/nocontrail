@@ -4,12 +4,19 @@ The two defenses that actually hold, plus one optional layer, all in the same
 STFT domain the detector uses (1 s Hann windows, 0.25 s hop) so what the
 scrubber touches is what the detector sees.
 
-  notch  — for each detected ridge (and its harmonics), zero a narrow band
-           that follows the ridge frame by frame. Surgical. This is the primary
-           defense: it removes the real line.
+  notch  — for each detected aircraft, replace narrow bands that follow its
+           fundamental and every harmonic up to the band top, frame by frame,
+           with floor-level noise. Surgical. This is the primary defense: it
+           removes the real lines without leaving a hole that traces the same
+           curve.
   gate   — in frames with no voice activity, attenuate everything below
-           `gate_f_hi`. Cheap, inaudible, removes the clean stretches a fitter
-           needs most.
+           `gate_f_hi`. Cheap and inaudible, but it scales line and floor
+           together, so a ridge's SNR is unchanged: measured on a synthetic
+           flyover, the whitened level along the ridge was identical before
+           and after a 40 dB gate, and an SNR-based fitter recovered the tone
+           from the gated audio exactly as from the raw. It only helps where
+           the attacker's floor is set elsewhere (codec noise, playback). Do
+           not count on it; the notch is the defense.
   decoy  — OPTIONAL, off by default, defense-in-depth only. Mix in synthetic
            flyovers at the real-line level so a fitter sees extra candidates.
            This only confuses an attacker who is NOT cross-referencing flight
@@ -29,7 +36,7 @@ from dataclasses import dataclass, field
 import numpy as np
 from scipy.signal import butter, get_window, sosfilt
 
-from .detect import DetectConfig, Track, find_tracks
+from .detect import DetectConfig, Track, find_tracks, group_flyovers
 from .doppler import Flyover
 
 
@@ -44,9 +51,10 @@ class ScrubConfig:
     vad_margin_db: float = 12.0        # above the band's noise floor counts as speech
     # notch
     notch: bool = True
-    notch_half_width_hz: float = 2.5
-    notch_harmonics: int = 3
-    notch_atten_db: float = 60.0
+    notch_half_width_hz: float = 2.5   # base; widens with harmonic number and line level (see notch_tracks)
+    notch_harmonics: int = 16          # cap; the sweep stops at the detection band's top anyway
+    notch_passes: int = 2              # detect -> erase -> re-detect -> erase; see scrub()
+    notch_atten_db: float = 60.0       # unused: the band is filled to floor level, not attenuated
     # decoy — optional defense-in-depth, off by default (see module docstring)
     decoy: bool = False
     decoy_count: int = 8
@@ -115,23 +123,83 @@ def _istft(Z, sr, nper, hop, n):
     return out[pad:pad + n]
 
 
-def notch_tracks(Z: np.ndarray, f: np.ndarray, t: np.ndarray, tracks: list[Track], cfg: ScrubConfig) -> np.ndarray:
+def notch_tracks(Z: np.ndarray, f: np.ndarray, t: np.ndarray, tracks: list[Track], cfg: ScrubConfig,
+                 rng: np.random.Generator | None = None, fill: np.ndarray | None = None) -> np.ndarray:
+    """Erase each tracked ridge (and its harmonics) by replacing the band with
+    floor-level noise, not silence.
+
+    A zeroed band leaves a hole. Its edges become the most prominent "peaks" in
+    the frame (a 60 dB valley beside ordinary floor bins) and the hole follows
+    the Doppler curve exactly, so a hole is as trackable as the line was:
+    measured on a synthetic flyover, a hard ±4 Hz notch left a ridge parallel
+    to the original, 4 Hz off, that find_tracks picked up as a clean flyover.
+    The fill takes the median magnitude of the bins just outside the band, so
+    the band becomes indistinguishable from the floor around it. Its phases
+    come from `fill`, the STFT of a real time-domain noise signal on the same
+    frame grid: phases drawn independently per frame are inconsistent across
+    the 75 %-overlapping frames, overlap-add partly cancels them, and the band
+    comes back 5-10 dB below its ring as a shallow trough that still traces the
+    Doppler curve (measured; the detector tracked its edge). Frame-consistent
+    noise survives resynthesis at the level it was given. Without `fill` it
+    falls back to random phase.
+
+    The width grows with the line's level because a loud line's window skirts
+    extend past a fixed notch: Hann sidelobes start at -31 dB, so a 36 dB line
+    still stands 5 dB over the floor at ±3-4 Hz. One extra bin per 6 dB above
+    25 dB keeps the skirts inside the fill."""
+    rng = rng if rng is not None else np.random.default_rng(0)
     Z = Z.copy()
-    g = 10 ** (-cfg.notch_atten_db / 20)
-    for tr in tracks:
-        # ridge at every STFT frame inside the track's span (interpolated)
-        inside = (t >= tr.times[0]) & (t <= tr.times[-1])
-        ridge = np.interp(t[inside], tr.times, tr.freqs)
+    df = float(f[1] - f[0])
+    dc = cfg.detect
+
+    def erase(j: int, fc: float, hw: float) -> None:
+        dist = np.abs(f - fc)
+        band = dist <= hw
+        if not band.any():
+            return
+        ring = (dist > hw) & (dist <= hw + 10 * df)
+        mag = float(np.median(np.abs(Z[ring, j]))) if ring.any() else 0.0
+        if fill is not None:
+            ref = fill[band, j]
+            Z[band, j] = ref * (mag / max(float(np.median(np.abs(ref))), 1e-30))
+        else:
+            Z[band, j] = mag * np.exp(1j * rng.uniform(0.0, 2 * np.pi, int(band.sum())))
+
+    # Work per aircraft, not per line: the lines of one plane are harmonics of
+    # one fundamental, so erasing each line's own multiples would cover the
+    # same bands three times over (and still skip the harmonics nobody
+    # tracked). Pool the group's members into one fundamental curve and sweep
+    # its harmonics once each, up to the top of the detection band.
+    for g in group_flyovers(tracks):
+        tt = np.concatenate([tr.times for tr in g.tracks])
+        ff = np.concatenate([tr.freqs / h for tr, h in zip(g.tracks, g.harmonics)])
+        pp = np.concatenate([tr.power for tr in g.tracks])
+        hs = np.concatenate([np.full(len(tr.times), h) for tr, h in zip(g.tracks, g.harmonics)])
+        order = np.argsort(tt)
+        tt, ff, pp, hs = tt[order], ff[order], pp[order], hs[order]
+        t_u, inv = np.unique(tt, return_inverse=True)
+        f0 = np.bincount(inv, weights=ff) / np.bincount(inv)
+        inside = (t >= t_u[0]) & (t <= t_u[-1])
         cols = np.where(inside)[0]
-        for h in range(1, cfg.notch_harmonics + 1):
-            # the fundamental the tracker found may itself be a harmonic; also
-            # cover sub-harmonics so f0/2 isn't left behind
-            for mult in (h, 1.0 / h):
-                fc = ridge * mult
-                hw = cfg.notch_half_width_hz * max(mult, 1.0)
-                for j, fcj in zip(cols, fc):
-                    band = np.abs(f - fcj) <= hw
-                    Z[band, j] *= g
+        f0_c = np.interp(t[inside], t_u, f0)
+        # level per tracked harmonic (for the width); untracked harmonics are faint
+        level_of: dict[int, np.ndarray] = {}
+        for h in set(int(x) for x in hs):
+            m = hs == h
+            level_of[h] = np.interp(t[inside], tt[m], pp[m], left=pp[m][0], right=pp[m][-1])
+        n_h = int(min(cfg.notch_harmonics, max(1, dc.f_hi // max(float(np.median(f0)), 1.0))))
+        n_h = max(n_h, max(g.harmonics))
+        for h in range(1, n_h + 1):
+            level = level_of.get(h, np.zeros(len(cols)))
+            # base width grows slowly with h (an f0 error scales with h) and with level
+            hw = cfg.notch_half_width_hz + 0.5 * (h - 1) + df * np.maximum(0.0, (level - 25.0) / 6.0)
+            for j, fcj, hwj in zip(cols, h * f0_c, hw):
+                erase(j, fcj, hwj)
+        # the group's "fundamental" may itself be the 2nd harmonic of one too
+        # faint to track; cover f0/2 as well
+        for j, fcj in zip(cols, 0.5 * f0_c):
+            if fcj >= dc.f_lo:
+                erase(j, fcj, cfg.notch_half_width_hz)
     return Z
 
 
@@ -192,7 +260,7 @@ def render_decoys(n: int, sr: int, flyovers: list[Flyover], level: float, harmon
 @dataclass
 class ScrubReport:
     tracks_before: list[Track]
-    tracks_after: list[Track]
+    tracks_after: list[Track]      # still detectable after the notch passes (pre-gate; the gate can't change it)
     decoys: list[Flyover]
     decoy_level: float
     vad_speech_fraction: float
@@ -207,16 +275,31 @@ def scrub(y: np.ndarray, sr: int, cfg: ScrubConfig | None = None) -> tuple[np.nd
     tracks = find_tracks(y, sr, dc)
     level = cfg.decoy_level if cfg.decoy_level is not None else real_line_level(y, sr, tracks, dc)
 
-    f, t, Z, nper, hop = _stft(y, sr, dc)
-    if cfg.notch and tracks:
-        Z = notch_tracks(Z, f, t, tracks, cfg)
+    # Notch in passes. Lines a louder one was masking, and fragments the first
+    # detection could not assemble (half a flyover under speech), show up as
+    # clean tracks once the first set is gone; each pass erases what the
+    # re-detection finds. The last re-detection is the report's "after": the
+    # gate below scales lines and floor together, so it cannot change it.
+    out = np.asarray(y, dtype=float)
+    remaining = tracks
+    for _ in range(cfg.notch_passes if cfg.notch else 0):
+        if not remaining:
+            break
+        f, t, Z, nper, hop = _stft(out, sr, dc)
+        fill = _stft(rng.standard_normal(n), sr, dc)[2]   # frame-consistent noise phases
+        Z = notch_tracks(Z, f, t, remaining, cfg, rng, fill)
+        out = _istft(Z, sr, nper, hop, n)
+        remaining = find_tracks(out, sr, dc)
+    after = remaining
+
     vad = voice_activity(y, sr, cfg, dc.hop_s)
     if cfg.gate:
+        f, t, Z, nper, hop = _stft(out, sr, dc)
         # Map each STFT column to its VAD frame by time (the STFT is zero-padded,
         # so column i is not VAD frame i).
         col = np.clip((t / dc.hop_s).astype(int), 0, len(vad) - 1)
         Z = gate_quiet_frames(Z, f, vad[col], cfg)
-    out = _istft(Z, sr, nper, hop, n)
+        out = _istft(Z, sr, nper, hop, n)
 
     decoys: list[Flyover] = []
     if cfg.decoy and level > 0:
@@ -224,5 +307,4 @@ def scrub(y: np.ndarray, sr: int, cfg: ScrubConfig | None = None) -> tuple[np.nd
         out = out + render_decoys(n, sr, decoys, level, cfg.decoy_harmonics)
 
     out = np.clip(out, -1, 1).astype(np.float32)
-    after = find_tracks(out, sr, dc)
     return out, ScrubReport(tracks, after, decoys, level, float(vad.mean()))
