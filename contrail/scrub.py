@@ -307,4 +307,6 @@ def scrub(y: np.ndarray, sr: int, cfg: ScrubConfig | None = None) -> tuple[np.nd
         out = out + render_decoys(n, sr, decoys, level, cfg.decoy_harmonics)
 
     out = np.clip(out, -1, 1).astype(np.float32)
+    if decoys:
+        after = find_tracks(out, sr, dc)   # decoys are meant to be detected; count them
     return out, ScrubReport(tracks, after, decoys, level, float(vad.mean()))

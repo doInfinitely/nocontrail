@@ -60,21 +60,21 @@ opt-in.
 | tier | what it does | synthetic bench (9 planted lines, 3 clips) |
 |---|---|---|
 | `gate` | in frames with no voice activity, attenuate < 500 Hz by 40 dB. Scales line and floor together, so a ridge's SNR is unchanged and a fitter sees it exactly as before | 9/9 lines survive |
-| `notch` | for each detected aircraft, replace bands that follow its fundamental and every harmonic up to 800 Hz, frame by frame, with floor-level noise; then re-detect and erase again | 1/9 survive |
-| `decoy` | mix in 8 synthetic flyovers with random plausible parameters, at the measured level of the real lines | 7/9 survive, 13/24 decoys detected |
-| all | | 1/9 survive, 16/24 decoys detected |
+| `notch` | for each detected aircraft, replace bands that follow its fundamental and every harmonic up to 800 Hz, frame by frame, with floor-level noise; then re-detect and erase again | 0/9 survive |
+| `decoy` | mix in 8 synthetic flyovers with random plausible parameters, at the measured level of the real lines | 9/9 survive, 15/24 decoys detected |
+| all | | 1/9 survive, 14/24 decoys detected |
 
 What that table says:
 
 * **Gating alone is weak** when the talker's pauses are short. The tracker
   bridges gaps under a second. It gets better with real speech (longer
   pauses) and a real VAD, but don't rely on it by itself.
-* **Notch does the work** — but only on lines the detector found. The 1/9
-  survivor was never detected, so was never notched. Scrub quality is capped
-  by detector recall. That's the argument for keeping the two in one repo.
-  The second pass exists for the same reason: once the loud lines are gone,
-  the fragments and masked lines the first detection missed stand alone and
-  track cleanly, so they get erased too.
+* **Notch does the work** — but only on lines the detector found, so scrub
+  quality is capped by detector recall. That's the argument for keeping the
+  two in one repo. The second pass exists for the same reason: once the loud
+  lines are gone, the fragments and masked lines the first detection missed
+  stand alone and track cleanly, so they get erased too (the single-pass
+  bench's one survivor was a line the first detection never found).
 * **Fill, don't zero.** A zeroed band leaves a hole whose edges are the most
   prominent "peaks" in the frame, and the hole follows the Doppler curve, so it
   is as trackable as the line was (measured: a hard ±4 Hz notch left a ridge
