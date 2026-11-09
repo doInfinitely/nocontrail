@@ -35,9 +35,22 @@ Early. Audit and scrub both run and are verified end-to-end: a planted-leak clip
 audits to 1.00 / 5 flyovers and a clean clip to 0; scrubbing that clip notches
 the detected lines, mixes in decoys, and saves a 16 kHz mono WAV with the real
 lines reduced. The detector itself is still validated only on synthetic audio.
-Not yet built: full-resolution (stereo / original-rate) scrub output, long-VOD
-sampling inside the app (use `scripts/audit_video.py` for whole VODs), and
-packaging/signing for distribution.
+Not yet built: full-resolution (stereo / original-rate) scrub output and
+Windows/Linux packages.
+
+## Release
+
+```bash
+cd app
+npm run dist           # signed DMG + zip for arm64 and x64 in app/dist/
+```
+
+Signing uses the Developer ID Application certificate in the login keychain.
+Notarization runs in `build/notarize.js` only when Apple credentials are in the
+environment (see that file); without them the build is signed but not
+notarized, and Gatekeeper will ask the user to open it from System Settings.
+Artifacts are named `NoContrail-mac-<arch>.dmg` without a version so the
+site's `releases/latest/download/` links stay valid across releases.
 
 ### Test / debug env vars
 

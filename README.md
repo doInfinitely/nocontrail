@@ -39,7 +39,7 @@ gating (next on the list) is meant to handle.
 ## What's here
 
 ```
-contrail/             the engine (pip install contrail)
+contrail/             the engine (pip install git+https://github.com/doInfinitely/nocontrail)
 contrail/doppler.py   exact retarded-time Doppler model for a straight flyover
 contrail/synth.py     synthetic test-clip generator (fake speech + planted planes)
 contrail/detect.py    STFT → whitening → sub-bin peak tracking → fragment merge

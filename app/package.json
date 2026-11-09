@@ -1,6 +1,6 @@
 {
   "name": "nocontrail-app",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "description": "No Contrail — audit your recordings for aircraft-Doppler location leaks, fully on your machine.",
   "private": true,
   "author": "No Contrail",
@@ -25,6 +25,7 @@
   "build": {
     "appId": "audio.nocontrail.app",
     "productName": "No Contrail",
+    "artifactName": "NoContrail-${os}-${arch}.${ext}",
     "copyright": "No Contrail",
     "asar": false,
     "afterSign": "build/notarize.js",
