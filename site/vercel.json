@@ -1,4 +1,8 @@
 {
+  "framework": null,
+  "buildCommand": "node build.js",
+  "installCommand": "",
+  "outputDirectory": "public",
   "headers": [
     {
       "source": "/app/(.*)",

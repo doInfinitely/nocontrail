@@ -1,14 +1,24 @@
-# Vercel CLI upload set. With this file present .gitignore is not consulted, which is
-# the point: the generated site/app assets (engine, pyodide) are git-ignored but must ship.
+# Vercel CLI upload set (with this file present .gitignore is not consulted).
+# The build step (site/build.js) needs app/renderer and contrail/ from the repo, so
+# those stay in; everything heavy or unrelated is out. Entries are anchored to the
+# root on purpose: an unanchored "app" would also match site/app.
 /.git
 /.venv
 /node_modules
-/app
+/app/node_modules
+/app/dist
+/app/engine
+/app/build
+/app/scripts
+/app/main.js
+/app/preload.js
+/app/package.json
+/app/package-lock.json
+/contrail/__pycache__
+/contrail.egg-info
 /audits
 /accumulate
 /accumulate_oldbar_2026-11-05
-/contrail
-/contrail.egg-info
 /demo
 /outreach
 /reports
@@ -23,3 +33,4 @@
 /.env*
 site/.env*
 site/.vercel
+site/public
