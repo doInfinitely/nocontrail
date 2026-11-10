@@ -13,3 +13,5 @@ demo/*.wav
 # subject audit data — contains per-flyover geometry; keep local
 audits/
 audits_report.html
+.vercel
+.env*
