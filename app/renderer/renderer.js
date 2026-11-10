@@ -276,6 +276,9 @@ async function handleBuffer(arrayBuffer, name) {
     setBar(1);
     prog.hidden = true;
     showResults(name, durationS, results, summary);
+    // visible in devtools, so anyone can check what was computed and that nothing was sent
+    console.log("AUDIT_DONE " + JSON.stringify({ name, durationS: Math.round(durationS), windows: results.length,
+      clean: summary.clean_flyovers, confirmed: summary.clean_confirmed_flyovers }));
   } catch (e) {
     prog.hidden = true;
     const r = el("results");

@@ -3,7 +3,8 @@
   "version": "0.1.0",
   "description": "No Contrail — audit your recordings for aircraft-Doppler location leaks, fully on your machine.",
   "private": true,
-  "author": "No Contrail",
+  "author": "No Contrail <hello@nocontrail.audio>",
+  "homepage": "https://nocontrail.audio",
   "main": "main.js",
   "scripts": {
     "sync-engine": "node scripts/sync-engine.js",
@@ -72,6 +73,30 @@
     },
     "dmg": {
       "title": "No Contrail ${version}"
+    },
+    "win": {
+      "icon": "build/icon.png",
+      "target": [
+        { "target": "nsis", "arch": ["x64"] },
+        { "target": "portable", "arch": ["x64"] }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "artifactName": "NoContrail-win-${arch}-setup.${ext}"
+    },
+    "portable": {
+      "artifactName": "NoContrail-win-${arch}-portable.${ext}"
+    },
+    "linux": {
+      "icon": "build/icon.png",
+      "category": "Audio",
+      "synopsis": "Audit your recordings for aircraft-Doppler location leaks, on your machine",
+      "target": [
+        { "target": "AppImage", "arch": ["x64", "arm64"] },
+        { "target": "deb", "arch": ["x64", "arm64"] }
+      ]
     }
   }
 }
